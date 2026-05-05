@@ -1,18 +1,12 @@
 #!/usr/bin/env node
 import { Command, InvalidArgumentError } from 'commander';
 
-import { doctor, initScope, install } from './core/install.js';
-import type { Kind, Scope, Target } from './core/types.js';
+import { doctor, initProject, install } from './core/install.js';
+import type { Kind, Target } from './core/types.js';
 import { splitCsv } from './core/util.js';
 
-const SCOPE_VALUES = ['project', 'user'] as const;
 const TARGET_VALUES = ['claude', 'codex', 'opencode'] as const;
 const KIND_VALUES = ['agent', 'skill', 'mcp'] as const;
-
-function parseScope(value: string): Scope {
-  if ((SCOPE_VALUES as readonly string[]).includes(value)) return value as Scope;
-  throw new InvalidArgumentError(`invalid scope: ${value}`);
-}
 
 function normalizeTargets(value: string | undefined): Target[] {
   const targets = splitCsv<Target>(value, TARGET_VALUES);
@@ -44,27 +38,26 @@ program
 
 program.command('init')
   .description('Initialize .airc source tree with starter reviewer + project-gates + project-rules definitions')
-  .option('--scope <scope>', 'project|user scope', parseScope, 'project')
   .option('--empty', 'create folders only without starter examples')
-  .action(async (opts: { scope: Scope; empty?: boolean }) => {
-    await initScope(opts.scope, process.cwd(), !!opts.empty);
+  .action(async (opts: { empty?: boolean }) => {
+    await initProject(process.cwd(), !!opts.empty);
   });
 
 program.command('install')
   .description('Install selected kinds/targets from .airc definitions')
-  .option('--scope <scope>', 'project|user scope', parseScope, 'project')
   .option('--target <targets>', 'comma-separated: claude,codex,opencode')
   .option('--kind <kinds>', 'comma-separated: agent,skill,mcp')
   .option('--dry-run', 'print planned changes only')
   .option('--clean', 'delete stale files tracked by manifest for selected kind/target')
+  .option('--check', 'verify generated outputs/manifests are up to date without writing')
   .option('--force', 'override unmanaged files')
-  .action(async (opts: { scope: Scope; target?: string; kind?: string; dryRun?: boolean; clean?: boolean; force?: boolean }) => {
+  .action(async (opts: { target?: string; kind?: string; dryRun?: boolean; clean?: boolean; check?: boolean; force?: boolean }) => {
     const result = await install({
-      scope: opts.scope,
       targets: normalizeTargets(opts.target),
       kinds: normalizeKinds(opts.kind),
       dryRun: !!opts.dryRun,
       clean: !!opts.clean,
+      check: !!opts.check,
       force: !!opts.force,
       cwd: process.cwd()
     });
@@ -75,11 +68,10 @@ program.command('install')
 
 program.command('doctor')
   .description('Validate definitions and print warnings')
-  .option('--scope <scope>', 'project|user scope', parseScope, 'project')
   .option('--target <targets>', 'comma-separated: claude,codex,opencode')
   .option('--kind <kinds>', 'comma-separated: agent,skill,mcp')
-  .action(async (opts: { scope: Scope; target?: string; kind?: string }) => {
-    const warnings = await doctor(opts.scope, process.cwd(), normalizeTargets(opts.target), normalizeKinds(opts.kind));
+  .action(async (opts: { target?: string; kind?: string }) => {
+    const warnings = await doctor(process.cwd(), normalizeTargets(opts.target), normalizeKinds(opts.kind));
     if (warnings.length === 0) {
       console.log('ok');
       return;

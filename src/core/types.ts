@@ -1,8 +1,9 @@
-export type Scope = 'project' | 'user';
+export type Pack = 'project';
 export type Target = 'claude' | 'codex' | 'opencode';
 export type Kind = 'agent' | 'skill' | 'mcp';
 
 export type AgentDef = {
+  pack: Pack;
   id: string;
   name?: string;
   description?: string;
@@ -14,6 +15,7 @@ export type AgentDef = {
 };
 
 export type SkillDef = {
+  pack: Pack;
   id: string;
   name?: string;
   description: string;
@@ -25,6 +27,7 @@ export type SkillDef = {
 };
 
 export type McpDef = {
+  pack: Pack;
   id: string;
   command?: string;
   args?: string[];
@@ -39,6 +42,7 @@ export type McpDef = {
 
 export type ManifestRecord = {
   version: 1;
+  pack: Pack;
   target: Target;
   kind: Kind;
   id: string;
@@ -50,7 +54,6 @@ export type ManifestRecord = {
 
 export type ManagedInventoryEntry = {
   version: 1;
-  relPath: string;
   format: 'file' | 'json' | 'toml' | 'markdown';
   selector: string;
 };
@@ -61,11 +64,11 @@ export type InstallManifest = {
 };
 
 export type InstallOptions = {
-  scope: Scope;
   targets: Target[];
   kinds: Kind[];
   dryRun?: boolean;
   clean?: boolean;
+  check?: boolean;
   force?: boolean;
   cwd: string;
 };

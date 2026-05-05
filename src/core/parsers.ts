@@ -60,6 +60,7 @@ export async function loadAgents(root: string): Promise<AgentDef[]> {
     if (ids.has(parsed.id)) throw new Error(`duplicate agent id: ${parsed.id}`);
     ids.add(parsed.id);
     out.push({
+      pack: 'project',
       ...parsed,
       sourcePath: file,
       sourceName: path.relative(root, file)
@@ -91,6 +92,7 @@ export async function loadSkills(root: string): Promise<SkillDef[]> {
     const body = raw.slice(closingIndex + 5);
 
     out.push({
+      pack: 'project',
       id,
       name: frontmatter.name,
       description: frontmatter.description,
@@ -115,6 +117,7 @@ export async function loadMcps(root: string): Promise<McpDef[]> {
 
     const envVars = collectEnvVarsFromText(JSON.stringify(parsed));
     out.push({
+      pack: 'project',
       ...parsed,
       envVars,
       sourcePath: file,

@@ -1,0 +1,13 @@
+{
+  "mcp": {
+    "project-rules": {
+      "type": "local",
+      "enabled": true,
+      "command": [
+        "node",
+        "./tools/project-rules-mcp.js",
+        "${PROJECT_RULES_TOKEN}"
+      ]
+    }
+  }
+}

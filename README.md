@@ -16,22 +16,22 @@ It tracks managed outputs in per-target install manifests so later installs can 
 
 - Node.js `>=20`
 - `npm`
-- A project root (for `--scope project`) or a home directory setup (for `--scope user`)
+- A project root containing `.airc/`
 
 ## Quick Start
 
 ```bash
 # 1) Initialize source definitions in project scope
-npx github:raniejade/airc init --scope project
+npx github:raniejade/airc init
 
 # 2) Validate definitions
-npx github:raniejade/airc doctor --scope project
+npx github:raniejade/airc doctor
 
 # 3) Preview generated changes
-npx github:raniejade/airc install --scope project --dry-run
+npx github:raniejade/airc install --dry-run
 
 # 4) Apply
-npx github:raniejade/airc install --scope project
+npx github:raniejade/airc install
 ```
 
 ## Source Layout (`.airc/`)
@@ -147,10 +147,9 @@ Use `npx github:raniejade/airc ...` to run from GitHub, or replace it with `airc
 Create `.airc` folders and optional starter examples.
 
 ```bash
-airc init [--scope project|user] [--empty]
+airc init [--empty]
 ```
 
-- `--scope`: defaults to `project`
 - `--empty`: only create folders, skip starter sample files
 
 ### `doctor`
@@ -158,7 +157,7 @@ airc init [--scope project|user] [--empty]
 Validate definitions and print warnings.
 
 ```bash
-airc doctor [--scope project|user] [--target claude,codex,opencode] [--kind agent,skill,mcp]
+airc doctor [--target claude,codex,opencode] [--kind agent,skill,mcp]
 ```
 
 - Prints `ok` when no warnings are found.
@@ -171,11 +170,12 @@ airc doctor [--scope project|user] [--target claude,codex,opencode] [--kind agen
 Generate and install selected definitions.
 
 ```bash
-airc install [--scope project|user] [--target claude,codex,opencode] [--kind agent,skill,mcp] [--dry-run] [--clean] [--force]
+airc install [--target claude,codex,opencode] [--kind agent,skill,mcp] [--dry-run] [--clean] [--check] [--force]
 ```
 
 - `--dry-run`: previews planned create/update paths and performs no writes.
 - `--clean`: deletes stale managed files for selected target+kind.
+- `--check`: verifies generated outputs/manifests are up to date without writing or deleting.
 - `--force`: allows overwrite of unmanaged files.
 
 Defaults: omitting `--target` applies all targets; omitting `--kind` applies all kinds.
@@ -196,8 +196,7 @@ Install manifests are used to track managed files and cleanup behavior.
 - Agents: `.claude/agents/<id>.md`
 - Skills: `.claude/skills/<id>/SKILL.md` + skill assets
 - MCP:
-  - project scope: `.mcp.json`
-  - user scope: `.claude.json`
+  - `.mcp.json`
 - Install manifest: `.claude/.airc-install-manifest.json`
 
 ### Codex
@@ -224,16 +223,16 @@ Use this sequence when enabling or changing definitions:
 
 ```bash
 # Validate first
-airc doctor --scope project
+airc doctor
 
 # Preview planned create/update changes (no writes)
-airc install --scope project --dry-run
+airc install --dry-run
 
 # Apply selected targets/kinds if needed
-airc install --scope project --target codex --kind agent,skill,mcp
+airc install --target codex --kind agent,skill,mcp
 
 # Optional: run stale managed-output cleanup after reviewing current definitions/managed outputs
-airc install --scope project --clean
+airc install --clean
 ```
 
 Guidelines:
@@ -245,9 +244,8 @@ Guidelines:
 
 ## Troubleshooting
 
-- `invalid scope/target/kind`
+- `invalid target/kind`
   - Use supported values only:
-    - scope: `project`, `user`
     - target: `claude`, `codex`, `opencode`
     - kind: `agent`, `skill`, `mcp`
 

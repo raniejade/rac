@@ -1,0 +1,4 @@
+id = "reviewer"
+name = "Reviewer"
+description = "Checks project rules and required gates"
+instructions = "./reviewer.instructions.md"

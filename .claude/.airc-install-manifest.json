@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "records": [
+    {
+      "version": 1,
+      "pack": "project",
+      "target": "claude",
+      "kind": "agent",
+      "id": "reviewer",
+      "source": "agents/reviewer.toml",
+      "relPath": ".claude/agents/reviewer.md",
+      "hash": "985cfcff9c0dfa97fdaa6ecb76a33e20335ffec9bfea6fa2cb41df100746ae18",
+      "inventory": [
+        {
+          "version": 1,
+          "format": "markdown",
+          "selector": "$"
+        }
+      ]
+    },
+    {
+      "version": 1,
+      "pack": "project",
+      "target": "claude",
+      "kind": "mcp",
+      "id": "project-rules",
+      "source": "mcps/project-rules.toml",
+      "relPath": ".mcp.json",
+      "hash": "097890891e1894793fa370896a2f1399331c3d6c9eed1c0312919745f2fcc379",
+      "inventory": [
+        {
+          "version": 1,
+          "format": "json",
+          "selector": "$.mcpServers.project-rules"
+        }
+      ]
+    },
+    {
+      "version": 1,
+      "pack": "project",
+      "target": "claude",
+      "kind": "skill",
+      "id": "project-gates",
+      "source": "skills/project-gates/checklist.md",
+      "relPath": ".claude/skills/project-gates/checklist.md",
+      "hash": "1d30684e1bdfc60f9592952c7f7cac4e9df917f9da263e594b4c8cdee030cf0e",
+      "inventory": [
+        {
+          "version": 1,
+          "format": "file",
+          "selector": "$"
+        }
+      ]
+    },
+    {
+      "version": 1,
+      "pack": "project",
+      "target": "claude",
+      "kind": "skill",
+      "id": "project-gates",
+      "source": "skills/project-gates/SKILL.md",
+      "relPath": ".claude/skills/project-gates/SKILL.md",
+      "hash": "f2d1ff082defcaae2d6644c1e7fd5eebdd0bfb4cad1e0c887451d844bd739ff5",
+      "inventory": [
+        {
+          "version": 1,
+          "format": "markdown",
+          "selector": "$"
+        }
+      ]
+    }
+  ]
+}

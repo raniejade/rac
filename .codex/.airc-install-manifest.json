@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "records": [
+    {
+      "version": 1,
+      "pack": "project",
+      "target": "codex",
+      "kind": "agent",
+      "id": "reviewer",
+      "source": "agents/reviewer.toml",
+      "relPath": ".codex/agents/reviewer.toml",
+      "hash": "50277ed7a06e547aa3150f2fff820827cd9490e2c94ce01342ff382d9ff8c78e",
+      "inventory": [
+        {
+          "version": 1,
+          "format": "toml",
+          "selector": "$"
+        }
+      ]
+    },
+    {
+      "version": 1,
+      "pack": "project",
+      "target": "codex",
+      "kind": "mcp",
+      "id": "project-rules",
+      "source": "mcps/project-rules.toml",
+      "relPath": ".codex/config.toml",
+      "hash": "745c56dd6d80bca35ce05cec4698d56b014a10a8a79aad86b9c942feb10becef",
+      "inventory": [
+        {
+          "version": 1,
+          "format": "toml",
+          "selector": "mcp_servers.project-rules"
+        }
+      ]
+    }
+  ]
+}

@@ -55,15 +55,16 @@ async function main() {
   try {
     await mkdir(sampleRepo, { recursive: true });
 
-    await runCli(sampleRepo, ['init', '--scope', 'project']);
+    await runCli(sampleRepo, ['init']);
     await writeFile(
       path.join(sampleRepo, '.airc', 'agents', 'reviewer.toml'),
       'id = "reviewer"\nname = "Reviewer"\ndescription = "Checks project rules and required gates"\ninstructions = "./reviewer.instructions.md"\n[vendor.codex.config]\nmodel = "gpt-5"\nmodel_reasoning_effort = "high"\nsandbox_mode = "workspace-write"\n',
       'utf8'
     );
-    await runCli(sampleRepo, ['doctor', '--scope', 'project', '--kind', 'mcp']);
-    await runCli(sampleRepo, ['install', '--scope', 'project', '--target', 'codex']);
-    await runCli(sampleRepo, ['install', '--scope', 'project', '--target', 'claude,opencode']);
+    await runCli(sampleRepo, ['doctor', '--kind', 'mcp']);
+    await runCli(sampleRepo, ['install', '--target', 'codex']);
+    await runCli(sampleRepo, ['install', '--target', 'claude,opencode']);
+    await runCli(sampleRepo, ['install', '--check']);
 
     await expectExists(path.join(sampleRepo, '.airc', 'agents', 'reviewer.toml'));
     await expectExists(path.join(sampleRepo, '.airc', 'skills', 'project-gates', 'SKILL.md'));

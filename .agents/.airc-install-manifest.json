@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "records": [
+    {
+      "version": 1,
+      "pack": "project",
+      "target": "codex",
+      "kind": "skill",
+      "id": "project-gates",
+      "source": "skills/project-gates/checklist.md",
+      "relPath": ".agents/skills/project-gates/checklist.md",
+      "hash": "1d30684e1bdfc60f9592952c7f7cac4e9df917f9da263e594b4c8cdee030cf0e",
+      "inventory": [
+        {
+          "version": 1,
+          "format": "file",
+          "selector": "$"
+        }
+      ]
+    },
+    {
+      "version": 1,
+      "pack": "project",
+      "target": "codex",
+      "kind": "skill",
+      "id": "project-gates",
+      "source": "skills/project-gates/SKILL.md",
+      "relPath": ".agents/skills/project-gates/SKILL.md",
+      "hash": "f2d1ff082defcaae2d6644c1e7fd5eebdd0bfb4cad1e0c887451d844bd739ff5",
+      "inventory": [
+        {
+          "version": 1,
+          "format": "markdown",
+          "selector": "$"
+        }
+      ]
+    }
+  ]
+}

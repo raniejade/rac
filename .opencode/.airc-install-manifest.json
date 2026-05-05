@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "records": [
+    {
+      "version": 1,
+      "pack": "project",
+      "target": "opencode",
+      "kind": "agent",
+      "id": "reviewer",
+      "source": "agents/reviewer.toml",
+      "relPath": ".opencode/agents/reviewer.md",
+      "hash": "985cfcff9c0dfa97fdaa6ecb76a33e20335ffec9bfea6fa2cb41df100746ae18",
+      "inventory": [
+        {
+          "version": 1,
+          "format": "markdown",
+          "selector": "$"
+        }
+      ]
+    },
+    {
+      "version": 1,
+      "pack": "project",
+      "target": "opencode",
+      "kind": "mcp",
+      "id": "project-rules",
+      "source": "mcps/project-rules.toml",
+      "relPath": ".opencode/opencode.json",
+      "hash": "be4e612b2bcff38a8fbc517f17d7be83093634c73167e02ca17807b168d60e97",
+      "inventory": [
+        {
+          "version": 1,
+          "format": "json",
+          "selector": "$.mcp.project-rules"
+        }
+      ]
+    },
+    {
+      "version": 1,
+      "pack": "project",
+      "target": "opencode",
+      "kind": "skill",
+      "id": "project-gates",
+      "source": "skills/project-gates/checklist.md",
+      "relPath": ".opencode/skills/project-gates/checklist.md",
+      "hash": "1d30684e1bdfc60f9592952c7f7cac4e9df917f9da263e594b4c8cdee030cf0e",
+      "inventory": [
+        {
+          "version": 1,
+          "format": "file",
+          "selector": "$"
+        }
+      ]
+    },
+    {
+      "version": 1,
+      "pack": "project",
+      "target": "opencode",
+      "kind": "skill",
+      "id": "project-gates",
+      "source": "skills/project-gates/SKILL.md",
+      "relPath": ".opencode/skills/project-gates/SKILL.md",
+      "hash": "f2d1ff082defcaae2d6644c1e7fd5eebdd0bfb4cad1e0c887451d844bd739ff5",
+      "inventory": [
+        {
+          "version": 1,
+          "format": "markdown",
+          "selector": "$"
+        }
+      ]
+    }
+  ]
+}
