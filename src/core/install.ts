@@ -237,13 +237,14 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
   const seenDeletePath = new Set<string>();
   if (options.clean) {
     for (const staleRecord of stale) {
-      if (!seenDeletePath.has(staleRecord.path)) {
+      const isStillReferenced = keptOrCurrentPathRefs.has(staleRecord.path);
+      if (isStillReferenced || options.dryRun || seenDeletePath.has(staleRecord.path)) {
+        continue;
+      }
+      if (await exists(staleRecord.path)) {
+        await rm(staleRecord.path, { recursive: true, force: true });
         del.push(staleRecord.path);
         seenDeletePath.add(staleRecord.path);
-      }
-      const isStillReferenced = keptOrCurrentPathRefs.has(staleRecord.path);
-      if (!isStillReferenced && !options.dryRun && (await exists(staleRecord.path))) {
-        await rm(staleRecord.path, { recursive: true, force: true });
       }
     }
   }

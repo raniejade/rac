@@ -128,9 +128,11 @@ export function emitMcp(target: Target, mcp: McpDef, scope: Scope): { relPath: s
 }
 
 export function emitMcps(target: Target, mcps: McpDef[], scope: Scope): { relPath: string; content: string; isJson: boolean } {
+  const sortedMcps = [...mcps].sort((a, b) => a.id.localeCompare(b.id));
+
   if (target === 'claude') {
     const relPath = scope === 'project' ? '.mcp.json' : '.claude.json';
-    const mcpServers = Object.fromEntries(mcps.map((mcp) => [
+    const mcpServers = Object.fromEntries(sortedMcps.map((mcp) => [
       mcp.id,
       mcp.command
         ? { command: mcp.command, args: mcp.args ?? [] }
@@ -141,7 +143,7 @@ export function emitMcps(target: Target, mcps: McpDef[], scope: Scope): { relPat
 
   if (target === 'codex') {
     const lines = [AIRC_MARKER];
-    for (const mcp of mcps) {
+    for (const mcp of sortedMcps) {
       const timeoutSec = mcp.startup_timeout_ms ? Math.ceil(mcp.startup_timeout_ms / 1000) : undefined;
       lines.push(`[mcp_servers.${mcp.id}]`);
       if (mcp.command) {
@@ -157,7 +159,7 @@ export function emitMcps(target: Target, mcps: McpDef[], scope: Scope): { relPat
     return { relPath: '.codex/config.toml', content: `${lines.join('\n').trimEnd()}\n`, isJson: false };
   }
 
-  const mcpPayload = Object.fromEntries(mcps.map((mcp) => [
+  const mcpPayload = Object.fromEntries(sortedMcps.map((mcp) => [
     mcp.id,
     mcp.command
       ? { command: [mcp.command, ...(mcp.args ?? [])] }
