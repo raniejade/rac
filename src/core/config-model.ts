@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { AgentDef, McpDef, SkillDef } from './types.js';
+import type { AgentDef, McpDef, Pack, SkillDef } from './types.js';
 import { assertNoTraversal, rel } from './util.js';
 
 export type ConfigWarning = {
@@ -11,11 +11,13 @@ export type ConfigWarning = {
 };
 
 export type SourceInfo = {
+  pack: Pack;
   absPath: string;
   relPath: string;
 };
 
 export type AgentConfig = {
+  pack: Pack;
   id: string;
   name?: string;
   description?: string;
@@ -33,12 +35,14 @@ export type AgentConfig = {
 };
 
 export type SkillAssetConfig = {
+  pack: Pack;
   relativePath: string;
   source: SourceInfo;
   hash: string;
 };
 
 export type SkillConfig = {
+  pack: Pack;
   id: string;
   description: string;
   body: string;
@@ -52,6 +56,7 @@ export type SkillConfig = {
 };
 
 export type McpConfig = {
+  pack: Pack;
   id: string;
   source: SourceInfo;
   envRefs: string[];
@@ -67,6 +72,7 @@ export type McpConfig = {
 };
 
 export type RuntimeConfig = {
+  pack: Pack;
   agents: AgentConfig[];
   skills: SkillConfig[];
   mcps: McpConfig[];
@@ -81,7 +87,7 @@ export type BuildRuntimeConfigInput = {
 };
 
 function sourceInfo(root: string, absPath: string): SourceInfo {
-  return { absPath, relPath: rel(root, absPath) };
+  return { pack: 'project', absPath, relPath: rel(root, absPath) };
 }
 
 function stripVendor(frontmatter: Record<string, unknown>): Record<string, unknown> {
@@ -109,11 +115,7 @@ function assertNoCollisions(overlay: Record<string, unknown> | undefined, genera
   }
 }
 
-function assertNoSharedKeys(
-  first: Record<string, unknown> | undefined,
-  second: Record<string, unknown> | undefined,
-  message: string
-): void {
+function assertNoSharedKeys(first: Record<string, unknown> | undefined, second: Record<string, unknown> | undefined, message: string): void {
   if (!first || !second) return;
   for (const key of Object.keys(first)) {
     if (Object.prototype.hasOwnProperty.call(second, key)) {
@@ -146,14 +148,11 @@ export async function buildRuntimeConfig(input: BuildRuntimeConfigInput): Promis
       throw new Error(`agent ${agent.id} cannot combine vendor.codex.emit=instruction-only with vendor.codex.config`);
     }
 
-    if (codexEmitInstructionOnly) {
-      warnings.push({ code: 'codex_instruction_only', message: `codex instruction-only emit configured for agent ${agent.id}` });
-    }
-    if (opencodeLegacyTools) {
-      warnings.push({ code: 'opencode_legacy_tools', message: `opencode vendor tools is legacy for agent ${agent.id}; prefer canonical tools` });
-    }
+    if (codexEmitInstructionOnly) warnings.push({ code: 'codex_instruction_only', message: `codex instruction-only emit configured for agent ${agent.id}` });
+    if (opencodeLegacyTools) warnings.push({ code: 'opencode_legacy_tools', message: `opencode vendor tools is legacy for agent ${agent.id}; prefer canonical tools` });
 
     return {
+      pack: agent.pack,
       id: agent.id,
       name: agent.name,
       description: agent.description,
@@ -179,6 +178,7 @@ export async function buildRuntimeConfig(input: BuildRuntimeConfigInput): Promis
     const claudeFrontmatter = targetVendorMap(vendorRaw, 'claude', 'frontmatter');
     const codexFrontmatter = targetVendorMap(vendorRaw, 'codex', 'frontmatter');
     const opencodeFrontmatter = targetVendorMap(vendorRaw, 'opencode', 'frontmatter');
+
     assertNoCollisions(claudeConfig, ['name', 'description'], `skill ${skill.id} vendor.claude.config collides with generated keys`);
     assertNoCollisions(codexConfig, ['name', 'description'], `skill ${skill.id} vendor.codex.config collides with generated keys`);
     assertNoCollisions(opencodeConfig, ['name', 'description'], `skill ${skill.id} vendor.opencode.config collides with generated keys`);
@@ -188,11 +188,13 @@ export async function buildRuntimeConfig(input: BuildRuntimeConfigInput): Promis
     assertNoSharedKeys(claudeConfig, claudeFrontmatter, `skill ${skill.id} vendor.claude.config conflicts with vendor.claude.frontmatter`);
     assertNoSharedKeys(codexConfig, codexFrontmatter, `skill ${skill.id} vendor.codex.config conflicts with vendor.codex.frontmatter`);
     assertNoSharedKeys(opencodeConfig, opencodeFrontmatter, `skill ${skill.id} vendor.opencode.config conflicts with vendor.opencode.frontmatter`);
+
     const baseFrontmatter = stripVendor({ ...skill.frontmatter, name: skill.id, description: skill.description });
     const assets = await Promise.all((skill.assets ?? []).map(async (assetRelativePath): Promise<SkillAssetConfig> => {
       const sourceFile = assertNoTraversal(path.dirname(skill.sourcePath), assetRelativePath, 'skill asset');
       const content = await readFile(sourceFile);
       return {
+        pack: skill.pack,
         relativePath: assetRelativePath,
         source: sourceInfo(input.root, sourceFile),
         hash: hashBuffer(content)
@@ -200,6 +202,7 @@ export async function buildRuntimeConfig(input: BuildRuntimeConfigInput): Promis
     }));
 
     return {
+      pack: skill.pack,
       id: skill.id,
       description: skill.description,
       body: skill.body,
@@ -214,6 +217,7 @@ export async function buildRuntimeConfig(input: BuildRuntimeConfigInput): Promis
   }));
 
   const mcps = input.mcps.map((mcp): McpConfig => ({
+    pack: mcp.pack,
     id: mcp.id,
     source: sourceInfo(input.root, mcp.sourcePath),
     envRefs: mcp.envVars,
@@ -228,5 +232,5 @@ export async function buildRuntimeConfig(input: BuildRuntimeConfigInput): Promis
       : { kind: 'remote', type: String(mcp.type), url: String(mcp.url) }
   }));
 
-  return { agents, skills, mcps, warnings };
+  return { pack: 'project', agents, skills, mcps, warnings };
 }

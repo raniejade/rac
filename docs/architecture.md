@@ -13,7 +13,7 @@ The core ownership rule is: upstream stages do not know about downstream file fo
 
 ## 1) Parsed Source Files (`src/core/parsers.ts`)
 
-Inputs are loaded from the scoped source root:
+Inputs are loaded from the project source root:
 
 - `agents/*.toml`
 - `skills/*/SKILL.md` with `+++` frontmatter
@@ -82,7 +82,7 @@ Non-responsibilities:
 
 The adapter contract is intentionally small:
 
-- Input: `RuntimeConfig` (+ scope when needed)
+- Input: `RuntimeConfig`
 - Output: declarative write plan (`AdapterOutput`)
 
 ## 4) Centralized Install Writer + Vendor-Local Manifest Safety (`src/core/install.ts`, `src/core/manifest.ts`)

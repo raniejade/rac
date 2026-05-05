@@ -6,9 +6,8 @@ import { adapterFor, vendorManifestRelPath } from '../adapters/target-adapters.j
 import { buildRuntimeConfig } from './config-model.js';
 import { deleteManifest, loadManifest, saveManifest } from './manifest.js';
 import { loadAgents, loadMcps, loadSkills } from './parsers.js';
-import { sourceRoot } from './scope.js';
 import type { InstallManifest, InstallOptions, InstallResult, Kind, ManifestRecord, Target } from './types.js';
-import { AIRC_MARKER, FM_SENSITIVE_MARKER } from './util.js';
+import { AIRC_MARKER, FM_SENSITIVE_MARKER, sha256 } from './util.js';
 
 type PlannedWrite = ManifestRecord & {
   manifestRelPath: string;
@@ -31,6 +30,10 @@ function stableKey(record: Pick<ManifestRecord, 'target' | 'kind' | 'id' | 'relP
   return `${record.target}:${record.kind}:${record.id}:${record.relPath}`;
 }
 
+function sortManifestRecords(records: ManifestRecord[]): ManifestRecord[] {
+  return [...records].sort((a, b) => stableKey(a).localeCompare(stableKey(b)));
+}
+
 async function canOverwrite(filePath: string, ownedRelPaths: Set<string>, relPath: string, force: boolean, isJson: boolean): Promise<boolean> {
   if (!(await exists(filePath))) return true;
   if (force) return true;
@@ -39,6 +42,10 @@ async function canOverwrite(filePath: string, ownedRelPaths: Set<string>, relPat
 
   const existing = await readFile(filePath, 'utf8');
   return existing.includes(AIRC_MARKER) || existing.includes(FM_SENSITIVE_MARKER);
+}
+
+async function contentMatches(filePath: string, expectedHash: string): Promise<boolean> {
+  return sha256(await readFile(filePath)) === expectedHash;
 }
 
 function selectedManifestRelPaths(targets: Target[], kinds: Kind[]): Set<string> {
@@ -51,8 +58,8 @@ function selectedManifestRelPaths(targets: Target[], kinds: Kind[]): Set<string>
   return selected;
 }
 
-export async function initScope(scope: 'project' | 'user', cwd: string, empty = false): Promise<void> {
-  const root = sourceRoot(scope, cwd);
+export async function initProject(cwd: string, empty = false): Promise<void> {
+  const root = path.join(cwd, '.airc');
   for (const dirName of ['agents', 'skills', 'mcps']) {
     await mkdir(path.join(root, dirName), { recursive: true });
   }
@@ -122,8 +129,8 @@ export async function initScope(scope: 'project' | 'user', cwd: string, empty = 
 }
 
 export async function install(options: InstallOptions): Promise<InstallResult> {
-  const root = sourceRoot(options.scope, options.cwd);
-  const targetRoot = options.scope === 'project' ? options.cwd : process.env.HOME || '';
+  const root = path.join(options.cwd, '.airc');
+  const targetRoot = options.cwd;
 
   const manifestsByRelPath = new Map<string, InstallManifest>();
   for (const relPath of selectedManifestRelPaths(options.targets, options.kinds)) {
@@ -135,19 +142,19 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
     for (const record of manifest.records) ownedRelPaths.add(record.relPath);
   }
 
-  const plan: PlannedWrite[] = [];
-
   const parsedAgents = options.kinds.includes('agent') ? await loadAgents(root) : [];
   const parsedSkills = options.kinds.includes('skill') ? await loadSkills(root) : [];
   const parsedMcps = options.kinds.includes('mcp') ? await loadMcps(root) : [];
   const config = await buildRuntimeConfig({ root, agents: parsedAgents, skills: parsedSkills, mcps: parsedMcps });
 
+  const plan: PlannedWrite[] = [];
   for (const target of options.targets) {
     const adapter = adapterFor(target);
-    const outputs = adapter.plan(config, options.scope);
+    const outputs = adapter.plan(config);
     for (const output of outputs) {
       plan.push({
         version: 1,
+        pack: output.pack,
         target: output.target,
         kind: output.kind,
         id: output.id,
@@ -169,6 +176,7 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
   const seenResultPath = new Set<string>();
   const checkedOverwritePath = new Set<string>();
   const appliedWriteByPath = new Set<string>();
+
   for (const write of plan) {
     if (!checkedOverwritePath.has(write.absPath)) {
       if (!(await canOverwrite(write.absPath, ownedRelPaths, write.relPath, !!options.force, !!write.isJson))) {
@@ -179,11 +187,15 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
 
     const alreadyExists = await exists(write.absPath);
     if (!seenResultPath.has(write.absPath)) {
-      if (alreadyExists) update.push(write.absPath); else create.push(write.absPath);
+      if (!alreadyExists) {
+        create.push(write.absPath);
+      } else if (!(await contentMatches(write.absPath, write.hash))) {
+        update.push(write.absPath);
+      }
       seenResultPath.add(write.absPath);
     }
 
-    if (!options.dryRun && !appliedWriteByPath.has(write.absPath)) {
+    if (!options.dryRun && !options.check && !appliedWriteByPath.has(write.absPath)) {
       await mkdir(path.dirname(write.absPath), { recursive: true });
       if (write.sourceFile) {
         await copyFile(write.sourceFile, write.absPath);
@@ -225,7 +237,7 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
       for (const staleRecord of staleRecords) {
         if (keptRelPaths.has(staleRecord.relPath)) continue;
         const absPath = path.join(targetRoot, staleRecord.relPath);
-        if (options.dryRun || seenDeletePath.has(absPath)) continue;
+        if (options.dryRun || options.check || seenDeletePath.has(absPath)) continue;
         if (await exists(absPath)) {
           await rm(absPath, { recursive: true, force: true });
           del.push(absPath);
@@ -235,13 +247,48 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
     }
   }
 
+  const nextManifestsByRelPath = new Map<string, InstallManifest>();
+  for (const [manifestRelPath, manifest] of manifestsByRelPath) {
+    const keep = manifest.records.filter((record) => !selected(record));
+    const current = plan
+      .filter((record) => record.manifestRelPath === manifestRelPath)
+      .map(({ version, pack, target, kind, id, source, relPath, hash, inventory }) => ({ version, pack, target, kind, id, source, relPath, hash, inventory }));
+    nextManifestsByRelPath.set(manifestRelPath, { version: 1, records: sortManifestRecords([...keep, ...current]) });
+  }
+
+  if (options.check) {
+    const failures: string[] = [];
+    for (const write of plan) {
+      if (!(await exists(write.absPath))) {
+        failures.push(`missing generated output: ${write.absPath}`);
+        continue;
+      }
+      if (!(await contentMatches(write.absPath, write.hash))) {
+        failures.push(`different generated output: ${write.absPath}`);
+      }
+    }
+
+    for (const [manifestRelPath, next] of nextManifestsByRelPath) {
+      const current = manifestsByRelPath.get(manifestRelPath) ?? { version: 1, records: [] };
+      if (JSON.stringify(current) !== JSON.stringify(next)) {
+        failures.push(`manifest would change: ${path.join(targetRoot, manifestRelPath)}`);
+      }
+    }
+
+    for (const staleRecords of staleByManifestRelPath.values()) {
+      for (const staleRecord of staleRecords) {
+        failures.push(`stale managed output requires cleanup: ${path.join(targetRoot, staleRecord.relPath)}`);
+      }
+    }
+
+    if (failures.length > 0) {
+      throw new Error(['install --check failed:', ...failures].join('\n'));
+    }
+    return { create, update, del: [] };
+  }
+
   if (!options.dryRun) {
-    for (const [manifestRelPath, manifest] of manifestsByRelPath) {
-      const keep = manifest.records.filter((record) => !selected(record));
-      const current = plan
-        .filter((record) => record.manifestRelPath === manifestRelPath)
-        .map(({ version, target, kind, id, source, relPath, hash, inventory }) => ({ version, target, kind, id, source, relPath, hash, inventory }));
-      const next = { version: 1 as const, records: [...keep, ...current] };
+    for (const [manifestRelPath, next] of nextManifestsByRelPath) {
       const manifestPath = path.join(targetRoot, manifestRelPath);
       if (next.records.length === 0) {
         await deleteManifest(manifestPath);
@@ -254,8 +301,8 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
   return { create, update, del };
 }
 
-export async function doctor(scope: 'project' | 'user', cwd: string, targets: ('claude' | 'codex' | 'opencode')[], kinds: ('agent' | 'skill' | 'mcp')[]): Promise<string[]> {
-  const root = sourceRoot(scope, cwd);
+export async function doctor(cwd: string, targets: ('claude' | 'codex' | 'opencode')[], kinds: ('agent' | 'skill' | 'mcp')[]): Promise<string[]> {
+  const root = path.join(cwd, '.airc');
 
   const parsedAgents = kinds.includes('agent') ? await loadAgents(root) : [];
   const parsedSkills = kinds.includes('skill') ? await loadSkills(root) : [];

@@ -4,7 +4,7 @@ import path from 'node:path';
 export const AIRC_MARKER = '<!-- managed-by-airc -->';
 export const FM_SENSITIVE_MARKER = '<!-- airc-frontmatter-sensitive -->';
 
-export function sha256(content: string): string {
+export function sha256(content: string | Buffer): string {
   return crypto.createHash('sha256').update(content).digest('hex');
 }
 
