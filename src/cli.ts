@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { Command, InvalidArgumentError } from 'commander';
+
 import { doctor, initScope, install } from './core/install.js';
 import type { Kind, Scope, Target } from './core/types.js';
 import { splitCsv } from './core/util.js';

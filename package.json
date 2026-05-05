@@ -11,7 +11,9 @@
   "scripts": {
     "build": "tsup src/cli.ts --format esm --dts --clean --out-dir dist",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix"
   },
   "dependencies": {
     "commander": "^12.1.0",
@@ -23,6 +25,10 @@
     "@types/node": "^22.15.3",
     "tsup": "^8.5.0",
     "typescript": "^5.8.3",
-    "vitest": "^2.1.1"
+    "vitest": "^2.1.1",
+    "eslint": "^9.26.0",
+    "@eslint/js": "^9.26.0",
+    "typescript-eslint": "^8.31.0",
+    "eslint-plugin-import": "^2.31.0"
   }
 }

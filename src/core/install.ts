@@ -1,12 +1,14 @@
 import { copyFile, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import crypto from 'node:crypto';
-import { emitAgent, emitMcps, emitSkill, skillAssetTargetPath } from '../adapters/emitters.js';
+
+import { adapterFor } from '../adapters/target-adapters.js';
+
+import { buildRuntimeConfig } from './config-model.js';
 import { loadManifest, manifestPath, saveManifest } from './manifest.js';
 import { loadAgents, loadMcps, loadSkills } from './parsers.js';
 import { sourceRoot } from './scope.js';
 import type { InstallManifest, InstallOptions, InstallResult, ManifestRecord } from './types.js';
-import { AIRC_MARKER, FM_SENSITIVE_MARKER, assertNoTraversal, rel, sha256 } from './util.js';
+import { AIRC_MARKER, FM_SENSITIVE_MARKER } from './util.js';
 
 type PlannedWrite = ManifestRecord & {
   content?: string;
@@ -115,83 +117,28 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
   const manifest = await loadManifest(manifestFile);
   const plan: PlannedWrite[] = [];
 
-  const agents = options.kinds.includes('agent') ? await loadAgents(root) : [];
-  const skills = options.kinds.includes('skill') ? await loadSkills(root) : [];
-  const mcps = options.kinds.includes('mcp') ? await loadMcps(root) : [];
+  const parsedAgents = options.kinds.includes('agent') ? await loadAgents(root) : [];
+  const parsedSkills = options.kinds.includes('skill') ? await loadSkills(root) : [];
+  const parsedMcps = options.kinds.includes('mcp') ? await loadMcps(root) : [];
+  const config = await buildRuntimeConfig({ root, agents: parsedAgents, skills: parsedSkills, mcps: parsedMcps });
 
   for (const target of options.targets) {
-    for (const agent of agents) {
-      let agentBody = agent.instructions;
-      if (agent.instructions.startsWith('./') || agent.instructions.startsWith('../')) {
-        const instructionFile = assertNoTraversal(path.dirname(agent.sourcePath), agent.instructions, 'agent instructions');
-        agentBody = await readFile(instructionFile, 'utf8');
-      }
-      const emitted = emitAgent(target, { ...agent, instructions: agentBody });
-      const content = emitted.content;
-      const outPath = path.join(targetRoot, emitted.relPath);
+    const adapter = adapterFor(target);
+    const outputs = adapter.plan(config, options.scope);
+    for (const output of outputs) {
+      const outPath = path.join(targetRoot, output.relPath);
       plan.push({
         version: 1,
-        target,
-        kind: 'agent',
-        id: agent.id,
-        source: rel(root, agent.sourcePath),
+        target: output.target,
+        kind: output.kind,
+        id: output.id,
+        source: output.source,
         path: outPath,
-        hash: sha256(content),
-        content,
-        isJson: emitted.isJson
+        hash: output.hash,
+        content: output.content,
+        sourceFile: output.sourceFile,
+        isJson: output.isJson
       });
-    }
-
-    for (const skill of skills) {
-      const emitted = emitSkill(target, skill);
-      const outPath = path.join(targetRoot, emitted.relPath);
-
-      plan.push({
-        version: 1,
-        target,
-        kind: 'skill',
-        id: skill.id,
-        source: rel(root, skill.sourcePath),
-        path: outPath,
-        hash: sha256(emitted.content),
-        content: emitted.content,
-        isJson: emitted.isJson
-      });
-
-      for (const assetRelativePath of skill.assets) {
-        const sourceFile = assertNoTraversal(path.dirname(skill.sourcePath), assetRelativePath, 'skill asset');
-        const targetRelativePath = skillAssetTargetPath(target, skill.id, assetRelativePath);
-        const assetHash = crypto.createHash('sha256').update(await readFile(sourceFile)).digest('hex');
-        plan.push({
-          version: 1,
-          target,
-          kind: 'skill',
-          id: skill.id,
-          source: rel(root, sourceFile),
-          path: path.join(targetRoot, targetRelativePath),
-          hash: assetHash,
-          sourceFile,
-          isJson: false
-        });
-      }
-    }
-
-    if (mcps.length > 0) {
-      const emitted = emitMcps(target, mcps, options.scope);
-      const outPath = path.join(targetRoot, emitted.relPath);
-      for (const mcp of mcps) {
-        plan.push({
-          version: 1,
-          target,
-          kind: 'mcp',
-          id: mcp.id,
-          source: rel(root, mcp.sourcePath),
-          path: outPath,
-          hash: sha256(emitted.content),
-          content: emitted.content,
-          isJson: emitted.isJson
-        });
-      }
     }
   }
 
@@ -259,37 +206,29 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
 }
 
 export async function doctor(scope: 'project' | 'user', cwd: string, targets: ('claude' | 'codex' | 'opencode')[], kinds: ('agent' | 'skill' | 'mcp')[]): Promise<string[]> {
-  const warnings: string[] = [];
   const root = sourceRoot(scope, cwd);
 
+  const parsedAgents = kinds.includes('agent') ? await loadAgents(root) : [];
+  const parsedSkills = kinds.includes('skill') ? await loadSkills(root) : [];
+  const parsedMcps = kinds.includes('mcp') ? await loadMcps(root) : [];
+  const config = await buildRuntimeConfig({ root, agents: parsedAgents, skills: parsedSkills, mcps: parsedMcps });
+
+  const warnings: string[] = [];
+
   if (kinds.includes('mcp')) {
-    const mcps = await loadMcps(root);
-    for (const mcp of mcps) {
-      for (const envVar of mcp.envVars) {
-        if (!process.env[envVar]) {
-          warnings.push(`missing env var: ${envVar} (referenced by mcp ${mcp.id})`);
-        }
+    for (const mcp of config.mcps) {
+      for (const envRef of mcp.envRefs) {
+        if (!process.env[envRef]) warnings.push(`missing env var: ${envRef} (referenced by mcp ${mcp.id})`);
       }
     }
   }
 
-  if (kinds.includes('agent') && targets.includes('codex')) {
-    const agents = await loadAgents(root);
-    for (const agent of agents) {
-      const emit = (agent.vendor?.codex as { emit?: string } | undefined)?.emit;
-      if (emit === 'instruction-only') {
-        warnings.push(`codex instruction-only emit configured for agent ${agent.id}`);
-      }
+  if (kinds.includes('agent')) {
+    if (targets.includes('codex')) {
+      warnings.push(...config.warnings.filter((warning) => warning.code === 'codex_instruction_only').map((warning) => warning.message));
     }
-  }
-
-  if (kinds.includes('agent') && targets.includes('opencode')) {
-    const agents = await loadAgents(root);
-    for (const agent of agents) {
-      const hasLegacyTools = Boolean((agent.vendor?.opencode as { tools?: unknown } | undefined)?.tools);
-      if (hasLegacyTools) {
-        warnings.push(`opencode vendor tools is legacy for agent ${agent.id}; prefer canonical tools`);
-      }
+    if (targets.includes('opencode')) {
+      warnings.push(...config.warnings.filter((warning) => warning.code === 'opencode_legacy_tools').map((warning) => warning.message));
     }
   }
 

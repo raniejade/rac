@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+
 import type { InstallManifest, Scope } from './types.js';
 
 export function manifestPath(scope: Scope, cwd: string): string {

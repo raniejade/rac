@@ -1,8 +1,10 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+
 import fg from 'fast-glob';
 import { parse } from 'smol-toml';
 import { z } from 'zod';
+
 import type { AgentDef, McpDef, SkillDef } from './types.js';
 import { collectEnvVarsFromText } from './util.js';
 

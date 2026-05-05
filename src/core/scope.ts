@@ -1,4 +1,5 @@
 import path from 'node:path';
+
 import type { Scope } from './types.js';
 
 export function sourceRoot(scope: Scope, cwd: string): string {

@@ -1,10 +1,13 @@
 import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
-import path from 'node:path';
 import os from 'node:os';
+import path from 'node:path';
+
 import { describe, expect, it, afterEach } from 'vitest';
+
+import { adapterFor, TARGET_ADAPTERS } from '../src/adapters/target-adapters.js';
+import { buildRuntimeConfig } from '../src/core/config-model.js';
 import { doctor, initScope, install } from '../src/core/install.js';
 import { loadAgents, loadMcps, loadSkills } from '../src/core/parsers.js';
-import { emitSkill } from '../src/adapters/emitters.js';
 
 const tempDirs: string[] = [];
 
@@ -71,22 +74,49 @@ describe('parsers', () => {
   });
 });
 
-describe('emit + install + doctor', () => {
-  it('emits vendor skill with YAML frontmatter and strips vendor except claude override', async () => {
+describe('runtime config + adapters', () => {
+  it('resolves relative agent instructions and skill assets in runtime config', async () => {
     const root = await makeTmp();
     await seed(root);
-    const skills = await loadSkills(path.join(root, '.airc'));
+    const sourceRoot = path.join(root, '.airc');
+    const config = await buildRuntimeConfig({
+      root: sourceRoot,
+      agents: await loadAgents(sourceRoot),
+      skills: await loadSkills(sourceRoot),
+      mcps: await loadMcps(sourceRoot)
+    });
 
-    const codex = emitSkill('codex', skills[0]).content;
-    expect(codex.startsWith('---\n')).toBe(true);
-    expect(codex).toContain('name: "project-gates"');
-    expect(codex).toContain('description: "project checks"');
-    expect(codex).not.toContain('vendor');
-
-    const claude = emitSkill('claude', skills[0]).content;
-    expect(claude).toContain('description: "claude override"');
+    expect(config.agents[0].instructions).toContain('Review this project.');
+    expect(config.skills[0].assets[0].relativePath).toBe('checklist.md');
+    expect(config.skills[0].assets[0].hash.length).toBeGreaterThan(0);
   });
 
+  it('adapters consume same runtime config and output vendor-specific files', async () => {
+    const root = await makeTmp();
+    await seed(root);
+    const sourceRoot = path.join(root, '.airc');
+    const config = await buildRuntimeConfig({
+      root: sourceRoot,
+      agents: await loadAgents(sourceRoot),
+      skills: await loadSkills(sourceRoot),
+      mcps: await loadMcps(sourceRoot)
+    });
+
+    const claude = adapterFor('claude').plan(config, 'project');
+    const codex = adapterFor('codex').plan(config, 'project');
+    const opencode = adapterFor('opencode').plan(config, 'project');
+
+    expect(claude.some((entry) => entry.relPath === '.claude/agents/reviewer.md')).toBe(true);
+    expect(codex.some((entry) => entry.relPath === '.codex/agents/reviewer.md')).toBe(true);
+    expect(opencode.some((entry) => entry.relPath === '.opencode/agents/reviewer.md')).toBe(true);
+  });
+
+  it('registers adapters in table-driven list', () => {
+    expect(TARGET_ADAPTERS.map((adapter) => adapter.target).sort()).toEqual(['claude', 'codex', 'opencode']);
+  });
+});
+
+describe('install + doctor', () => {
   it('init refuses overwrite and install copies only declared assets', async () => {
     const root = await makeTmp();
     await initScope('project', root, false);
@@ -211,5 +241,11 @@ describe('emit + install + doctor', () => {
     expect(warnings.join('\n')).toContain('missing env var: PROJECT_RULES_TOKEN');
     expect(warnings.join('\n')).toContain('codex instruction-only emit configured for agent reviewer');
     expect(warnings.join('\n')).toContain('opencode vendor tools is legacy for agent reviewer');
+  });
+
+  it('package scripts include lint and lint:fix', async () => {
+    const packageJson = JSON.parse(await readFile(path.join(process.cwd(), 'package.json'), 'utf8')) as { scripts?: Record<string, string> };
+    expect(packageJson.scripts?.lint).toBeDefined();
+    expect(packageJson.scripts?.['lint:fix']).toBeDefined();
   });
 });
