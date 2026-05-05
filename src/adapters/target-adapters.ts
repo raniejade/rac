@@ -143,8 +143,8 @@ function opencodeAdapter(): TargetAdapter {
         const mcp = Object.fromEntries([...config.mcps].sort((a, b) => a.id.localeCompare(b.id)).map((server) => [
           server.id,
           server.transport.kind === 'local'
-            ? { command: [server.transport.command, ...server.transport.args] }
-            : { type: 'remote', url: server.transport.url }
+            ? { type: 'local', enabled: true, command: [server.transport.command, ...server.transport.args] }
+            : { type: 'remote', enabled: true, url: server.transport.url }
         ]));
         const content = `${JSON.stringify({ mcp }, null, 2)}\n`;
         for (const server of config.mcps) {

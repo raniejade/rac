@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /* global console, process */
-import { mkdtemp, access, mkdir, rm, stat } from 'node:fs/promises';
+import { mkdtemp, access, mkdir, readFile, rm, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -36,14 +36,8 @@ async function expectExists(filePath) {
   await stat(filePath);
 }
 
-async function expectMissing(filePath) {
-  try {
-    await stat(filePath);
-    throw new Error(`expected missing path: ${filePath}`);
-  } catch (error) {
-    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return;
-    throw error;
-  }
+async function readJson(filePath) {
+  return JSON.parse(await readFile(filePath, 'utf8'));
 }
 
 async function main() {
@@ -64,7 +58,7 @@ async function main() {
     await runCli(sampleRepo, ['init', '--scope', 'project']);
     await runCli(sampleRepo, ['doctor', '--scope', 'project', '--kind', 'mcp']);
     await runCli(sampleRepo, ['install', '--scope', 'project', '--target', 'codex']);
-    await runCli(sampleRepo, ['install', '--scope', 'project', '--target', 'claude,opencode', '--dry-run']);
+    await runCli(sampleRepo, ['install', '--scope', 'project', '--target', 'claude,opencode']);
 
     await expectExists(path.join(sampleRepo, '.airc', 'agents', 'reviewer.toml'));
     await expectExists(path.join(sampleRepo, '.airc', 'skills', 'project-gates', 'SKILL.md'));
@@ -75,8 +69,17 @@ async function main() {
     await expectExists(path.join(sampleRepo, '.agents', 'skills', 'project-gates', 'SKILL.md'));
     await expectExists(path.join(sampleRepo, '.codex', 'config.toml'));
 
-    await expectMissing(path.join(sampleRepo, '.claude'));
-    await expectMissing(path.join(sampleRepo, '.opencode'));
+    await expectExists(path.join(sampleRepo, '.mcp.json'));
+    await expectExists(path.join(sampleRepo, '.opencode', 'opencode.json'));
+
+    const opencode = await readJson(path.join(sampleRepo, '.opencode', 'opencode.json'));
+    const projectRules = opencode?.mcp?.['project-rules'];
+    if (!projectRules || projectRules.type !== 'local' || projectRules.enabled !== true) {
+      throw new Error('OpenCode MCP entry for project-rules missing required type/local enabled schema');
+    }
+    if (!Array.isArray(projectRules.command) || projectRules.command[0] !== 'node') {
+      throw new Error('OpenCode MCP entry for project-rules has unexpected command shape');
+    }
 
     console.log('harness smoke: ok');
   } catch (error) {

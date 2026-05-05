@@ -222,8 +222,17 @@ describe('install + doctor', () => {
     expect(codexToml.indexOf('[mcp_servers.a-remote]')).toBeLessThan(codexToml.indexOf('[mcp_servers.project-rules]'));
     expect(codexToml.indexOf('[mcp_servers.project-rules]')).toBeLessThan(codexToml.indexOf('[mcp_servers.z-remote]'));
 
-    const opencode = JSON.parse(await readFile(path.join(root, '.opencode/opencode.json'), 'utf8')) as { mcp: Record<string, unknown> };
+    const opencode = JSON.parse(await readFile(path.join(root, '.opencode/opencode.json'), 'utf8')) as { mcp: Record<string, { type: string; enabled: boolean; command?: string[]; url?: string }> };
     expect(Object.keys(opencode.mcp)).toEqual(['a-remote', 'project-rules', 'z-remote']);
+    expect(opencode.mcp['project-rules'].type).toBe('local');
+    expect(opencode.mcp['project-rules'].enabled).toBe(true);
+    expect(opencode.mcp['project-rules'].command?.[0]).toBe('node');
+    expect(opencode.mcp['project-rules'].command?.at(-1)).toBe('${PROJECT_RULES_TOKEN}');
+    expect(opencode.mcp['a-remote']).toEqual({
+      type: 'remote',
+      enabled: true,
+      url: 'https://example.test/a'
+    });
   });
 
   it('clean keeps shared MCP config path when still used by current MCP set', async () => {
