@@ -42,8 +42,16 @@ export type ManifestRecord = {
   kind: Kind;
   id: string;
   source: string;
-  path: string;
+  relPath: string;
   hash: string;
+  inventory: ManagedInventoryEntry[];
+};
+
+export type ManagedInventoryEntry = {
+  version: 1;
+  relPath: string;
+  format: 'file' | 'json' | 'toml' | 'markdown';
+  selector: string;
 };
 
 export type InstallManifest = {

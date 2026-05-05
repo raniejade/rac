@@ -7,7 +7,7 @@ AIRC is organized as a strict 4-stage flow:
 1. Parsed source files
 2. Common runtime representation
 3. Vendor-specific adapters
-4. Centralized install writer with manifest safety
+4. Centralized install writer with vendor-local manifest safety
 
 The core ownership rule is: upstream stages do not know about downstream file formats.
 
@@ -78,7 +78,7 @@ The adapter contract is intentionally small:
 - Input: `RuntimeConfig` (+ scope when needed)
 - Output: declarative write plan (`AdapterOutput`)
 
-## 4) Centralized Install Writer + Manifest Safety (`src/core/install.ts`, `src/core/manifest.ts`)
+## 4) Centralized Install Writer + Vendor-Local Manifest Safety (`src/core/install.ts`, `src/core/manifest.ts`)
 
 `install(...)` is the only write/delete orchestrator.
 
@@ -88,11 +88,15 @@ Responsibilities:
 - Apply overwrite guardrails (`canOverwrite`) with managed-file checks
 - Write files (content or asset copy) exactly once per destination path
 - Optionally clean stale managed outputs
-- Persist install manifest at `.airc/.install-manifest.json` (project or user scope)
+- Persist vendor-local install manifests per target/kind:
+- `.claude/.airc-install-manifest.json` (claude agents/skills/mcp)
+- `.codex/.airc-install-manifest.json` (codex agents/mcp)
+- `.agents/.airc-install-manifest.json` (codex skills)
+- `.opencode/.airc-install-manifest.json` (opencode agents/skills/mcp)
 
 Safety model:
 
-- Managed ownership is tracked in the install manifest
+- Managed ownership is tracked in vendor-local manifests using `relPath` + inventory selectors
 - Unmanaged files are protected from overwrite unless explicit conditions are met (`force`, manifest-owned, or managed markers for text outputs)
 - Deletions are constrained to stale manifest-owned outputs when `clean` is enabled
 

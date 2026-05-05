@@ -186,10 +186,10 @@ describe('install + doctor', () => {
     await expect(install({ scope: 'project', cwd: root, targets: ['opencode'], kinds: ['mcp'] })).rejects.toThrow('refusing overwrite unmanaged file');
     await expect(install({ scope: 'project', cwd: root, targets: ['opencode'], kinds: ['mcp'], dryRun: true })).rejects.toThrow('refusing overwrite unmanaged file');
 
-    const beforeManifestMissing = stat(path.join(root, '.airc/.install-manifest.json'));
+    const beforeManifestMissing = stat(path.join(root, '.codex/.airc-install-manifest.json'));
     await expect(beforeManifestMissing).rejects.toThrow();
     await install({ scope: 'project', cwd: root, targets: ['codex'], kinds: ['agent'], dryRun: true });
-    await expect(stat(path.join(root, '.airc/.install-manifest.json'))).rejects.toThrow();
+    await expect(stat(path.join(root, '.codex/.airc-install-manifest.json'))).rejects.toThrow();
 
     await expect(install({ scope: 'project', cwd: root, targets: ['opencode'], kinds: ['mcp'], force: true })).resolves.toBeTruthy();
   });
@@ -282,6 +282,96 @@ describe('install + doctor', () => {
     expect(Object.keys(kept.mcpServers)).toEqual(['project-rules']);
   });
 
+  it('real install writes vendor-local manifests and never central manifest', async () => {
+    const root = await makeTmp();
+    await seed(root);
+    await install({ scope: 'project', cwd: root, targets: ['claude', 'codex', 'opencode'], kinds: ['agent', 'skill', 'mcp'] });
+
+    await expect(stat(path.join(root, '.claude/.airc-install-manifest.json'))).resolves.toBeTruthy();
+    await expect(stat(path.join(root, '.codex/.airc-install-manifest.json'))).resolves.toBeTruthy();
+    await expect(stat(path.join(root, '.agents/.airc-install-manifest.json'))).resolves.toBeTruthy();
+    await expect(stat(path.join(root, '.opencode/.airc-install-manifest.json'))).resolves.toBeTruthy();
+    await expect(stat(path.join(root, '.airc/.install-manifest.json'))).rejects.toThrow();
+  });
+
+  it('codex uses separate manifests for .codex outputs and .agents skills', async () => {
+    const root = await makeTmp();
+    await seed(root);
+    await install({ scope: 'project', cwd: root, targets: ['codex'], kinds: ['agent', 'skill', 'mcp'] });
+
+    const codexManifest = JSON.parse(await readFile(path.join(root, '.codex/.airc-install-manifest.json'), 'utf8')) as {
+      records: Array<{ kind: string; relPath: string }>;
+    };
+    const agentsManifest = JSON.parse(await readFile(path.join(root, '.agents/.airc-install-manifest.json'), 'utf8')) as {
+      records: Array<{ kind: string; relPath: string }>;
+    };
+
+    expect(codexManifest.records.every((record) => record.kind !== 'skill')).toBe(true);
+    expect(codexManifest.records.every((record) => record.relPath.startsWith('.codex/'))).toBe(true);
+    expect(agentsManifest.records.every((record) => record.kind === 'skill')).toBe(true);
+    expect(agentsManifest.records.every((record) => record.relPath.startsWith('.agents/skills/'))).toBe(true);
+  });
+
+  it('claude mcp records live in .claude manifest while output file remains .mcp.json', async () => {
+    const root = await makeTmp();
+    await seed(root);
+    await install({ scope: 'project', cwd: root, targets: ['claude'], kinds: ['mcp'] });
+
+    const manifest = JSON.parse(await readFile(path.join(root, '.claude/.airc-install-manifest.json'), 'utf8')) as {
+      records: Array<{ kind: string; relPath: string }>;
+    };
+    expect(manifest.records.every((record) => record.kind === 'mcp')).toBe(true);
+    expect(manifest.records.every((record) => record.relPath === '.mcp.json')).toBe(true);
+    await expect(stat(path.join(root, '.mcp.json'))).resolves.toBeTruthy();
+  });
+
+  it('manifest records use relPath and do not include absolute path field', async () => {
+    const root = await makeTmp();
+    await seed(root);
+    await install({ scope: 'project', cwd: root, targets: ['codex'], kinds: ['agent'] });
+
+    const manifest = JSON.parse(await readFile(path.join(root, '.codex/.airc-install-manifest.json'), 'utf8')) as {
+      records: Array<Record<string, unknown>>;
+    };
+    expect(manifest.records.length).toBeGreaterThan(0);
+    for (const record of manifest.records) {
+      expect(typeof record.relPath).toBe('string');
+      expect(record).not.toHaveProperty('path');
+    }
+  });
+
+  it('mcp inventory selectors are present for claude/codex/opencode shared config entries', async () => {
+    const root = await makeTmp();
+    await seed(root);
+    await install({ scope: 'project', cwd: root, targets: ['claude', 'codex', 'opencode'], kinds: ['mcp'] });
+
+    const claudeManifest = JSON.parse(await readFile(path.join(root, '.claude/.airc-install-manifest.json'), 'utf8')) as {
+      records: Array<{ id: string; inventory: Array<{ selector: string }> }>;
+    };
+    const codexManifest = JSON.parse(await readFile(path.join(root, '.codex/.airc-install-manifest.json'), 'utf8')) as {
+      records: Array<{ id: string; inventory: Array<{ selector: string }> }>;
+    };
+    const opencodeManifest = JSON.parse(await readFile(path.join(root, '.opencode/.airc-install-manifest.json'), 'utf8')) as {
+      records: Array<{ id: string; inventory: Array<{ selector: string }> }>;
+    };
+
+    for (const record of claudeManifest.records) expect(record.inventory[0]?.selector).toBe(`$.mcpServers.${record.id}`);
+    for (const record of codexManifest.records) expect(record.inventory[0]?.selector).toBe(`mcp_servers.${record.id}`);
+    for (const record of opencodeManifest.records) expect(record.inventory[0]?.selector).toBe(`$.mcp.${record.id}`);
+  });
+
+  it('dry-run writes no vendor manifests and no central manifest', async () => {
+    const root = await makeTmp();
+    await seed(root);
+    await install({ scope: 'project', cwd: root, targets: ['claude', 'codex', 'opencode'], kinds: ['agent', 'skill', 'mcp'], dryRun: true });
+
+    await expect(stat(path.join(root, '.claude/.airc-install-manifest.json'))).rejects.toThrow();
+    await expect(stat(path.join(root, '.codex/.airc-install-manifest.json'))).rejects.toThrow();
+    await expect(stat(path.join(root, '.agents/.airc-install-manifest.json'))).rejects.toThrow();
+    await expect(stat(path.join(root, '.opencode/.airc-install-manifest.json'))).rejects.toThrow();
+    await expect(stat(path.join(root, '.airc/.install-manifest.json'))).rejects.toThrow();
+  });
+
   it('vendor compatibility schema: Codex agent TOML emits name/description/developer_instructions and rejects id/instructions keys', async () => {
     const root = await makeTmp();
     await mkdir(path.join(root, '.airc/agents'), { recursive: true });
@@ -305,14 +395,30 @@ describe('install + doctor', () => {
     await seed(root);
 
     await install({ scope: 'project', cwd: root, targets: ['codex'], kinds: ['skill'] });
-    const manifestOne = JSON.parse(await readFile(path.join(root, '.airc/.install-manifest.json'), 'utf8')) as { records: Array<{ path: string; hash: string; kind: string }> };
-    const assetRecord = manifestOne.records.find((record) => record.path.endsWith(path.join('project-gates', 'checklist.md')));
+    const manifestPath = path.join(root, '.agents/.airc-install-manifest.json');
+    const manifestOne = JSON.parse(await readFile(manifestPath, 'utf8')) as {
+      records: Array<{ relPath: string; hash: string; kind: string; inventory: Array<{ selector: string }> }>;
+    };
+    const assetRecord = manifestOne.records.find((record) => record.relPath.endsWith(path.join('project-gates', 'checklist.md')));
     expect(assetRecord?.kind).toBe('skill');
     expect(assetRecord?.hash && assetRecord.hash.length > 0).toBe(true);
+    expect(assetRecord?.inventory[0]?.selector).toBe('$');
 
     await expect(install({ scope: 'project', cwd: root, targets: ['codex'], kinds: ['skill'] })).resolves.toBeTruthy();
-    const manifestTwo = JSON.parse(await readFile(path.join(root, '.airc/.install-manifest.json'), 'utf8')) as { records: unknown[] };
+    const manifestTwo = JSON.parse(await readFile(manifestPath, 'utf8')) as { records: unknown[] };
     expect(manifestTwo.records).toEqual(manifestOne.records);
+  });
+
+  it('clean removes empty vendor manifest after last record is removed', async () => {
+    const root = await makeTmp();
+    await seed(root);
+    await install({ scope: 'project', cwd: root, targets: ['codex'], kinds: ['agent'] });
+
+    await rm(path.join(root, '.airc/agents/reviewer.toml'));
+    await rm(path.join(root, '.airc/agents/reviewer.md'));
+    await install({ scope: 'project', cwd: root, targets: ['codex'], kinds: ['agent'], clean: true });
+
+    await expect(stat(path.join(root, '.codex/.airc-install-manifest.json'))).rejects.toThrow();
   });
 
   it('doctor emits expected warnings for env, codex instruction-only, opencode legacy tools', async () => {

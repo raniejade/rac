@@ -1,7 +1,7 @@
 import path from 'node:path';
 
 import type { RuntimeConfig, SkillAssetConfig } from '../core/config-model.js';
-import type { Scope, Target } from '../core/types.js';
+import type { Kind, ManagedInventoryEntry, Scope, Target } from '../core/types.js';
 import { AIRC_MARKER, sha256 } from '../core/util.js';
 
 import { textManagedPayload } from './shared.js';
@@ -12,6 +12,8 @@ export type AdapterOutput = {
   id: string;
   source: string;
   relPath: string;
+  manifestRelPath: string;
+  inventory: ManagedInventoryEntry[];
   hash: string;
   content?: string;
   sourceFile?: string;
@@ -22,6 +24,13 @@ export type TargetAdapter = {
   target: Target;
   plan: (config: RuntimeConfig, scope: Scope) => AdapterOutput[];
 };
+
+export function vendorManifestRelPath(target: Target, kind: Kind): string {
+  if (target === 'claude') return '.claude/.airc-install-manifest.json';
+  if (target === 'opencode') return '.opencode/.airc-install-manifest.json';
+  if (kind === 'skill') return '.agents/.airc-install-manifest.json';
+  return '.codex/.airc-install-manifest.json';
+}
 
 function skillAssetTargetPath(target: Target, skillId: string, asset: SkillAssetConfig): string {
   if (target === 'claude') return path.join('.claude/skills', skillId, asset.relativePath);
@@ -38,15 +47,18 @@ function claudeAdapter(): TargetAdapter {
       for (const agent of config.agents) {
         const frontmatter = { name: agent.id, description: agent.description ?? agent.name ?? agent.id };
         const content = textManagedPayload(frontmatter, agent.instructions);
-        outputs.push({ target: 'claude', kind: 'agent', id: agent.id, source: agent.source.relPath, relPath: `.claude/agents/${agent.id}.md`, content, hash: sha256(content), isJson: false });
+        const relPath = `.claude/agents/${agent.id}.md`;
+        outputs.push({ target: 'claude', kind: 'agent', id: agent.id, source: agent.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('claude', 'agent'), inventory: [{ version: 1, relPath, format: 'markdown', selector: '$' }], content, hash: sha256(content), isJson: false });
       }
 
       for (const skill of config.skills) {
         const frontmatter = skill.claudeFrontmatter ?? skill.frontmatter;
         const content = textManagedPayload(frontmatter, skill.body);
-        outputs.push({ target: 'claude', kind: 'skill', id: skill.id, source: skill.source.relPath, relPath: `.claude/skills/${skill.id}/SKILL.md`, content, hash: sha256(content), isJson: false });
+        const relPath = `.claude/skills/${skill.id}/SKILL.md`;
+        outputs.push({ target: 'claude', kind: 'skill', id: skill.id, source: skill.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('claude', 'skill'), inventory: [{ version: 1, relPath, format: 'markdown', selector: '$' }], content, hash: sha256(content), isJson: false });
         for (const asset of skill.assets) {
-          outputs.push({ target: 'claude', kind: 'skill', id: skill.id, source: asset.source.relPath, relPath: skillAssetTargetPath('claude', skill.id, asset), sourceFile: asset.source.absPath, hash: asset.hash, isJson: false });
+          const relPath = skillAssetTargetPath('claude', skill.id, asset);
+          outputs.push({ target: 'claude', kind: 'skill', id: skill.id, source: asset.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('claude', 'skill'), inventory: [{ version: 1, relPath, format: 'file', selector: '$' }], sourceFile: asset.source.absPath, hash: asset.hash, isJson: false });
         }
       }
 
@@ -60,7 +72,7 @@ function claudeAdapter(): TargetAdapter {
         ]));
         const content = `${JSON.stringify({ mcpServers }, null, 2)}\n`;
         for (const mcp of config.mcps) {
-          outputs.push({ target: 'claude', kind: 'mcp', id: mcp.id, source: mcp.source.relPath, relPath, content, hash: sha256(content), isJson: true });
+          outputs.push({ target: 'claude', kind: 'mcp', id: mcp.id, source: mcp.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('claude', 'mcp'), inventory: [{ version: 1, relPath, format: 'json', selector: `$.mcpServers.${mcp.id}` }], content, hash: sha256(content), isJson: true });
         }
       }
 
@@ -79,18 +91,22 @@ function codexAdapter(): TargetAdapter {
         const frontmatter = { name: agent.id, description: agent.description ?? agent.name ?? agent.id };
         if (agent.vendor.codexEmitInstructionOnly) {
           const content = textManagedPayload(frontmatter, agent.instructions);
-          outputs.push({ target: 'codex', kind: 'agent', id: agent.id, source: agent.source.relPath, relPath: `.codex/agents/${agent.id}.md`, content, hash: sha256(content), isJson: false });
+          const relPath = `.codex/agents/${agent.id}.md`;
+          outputs.push({ target: 'codex', kind: 'agent', id: agent.id, source: agent.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('codex', 'agent'), inventory: [{ version: 1, relPath, format: 'markdown', selector: '$' }], content, hash: sha256(content), isJson: false });
         } else {
           const content = `${AIRC_MARKER}\nname = ${JSON.stringify(agent.id)}\ndescription = ${JSON.stringify(agent.description ?? agent.name ?? agent.id)}\ndeveloper_instructions = ${JSON.stringify(agent.instructions)}\n`;
-          outputs.push({ target: 'codex', kind: 'agent', id: agent.id, source: agent.source.relPath, relPath: `.codex/agents/${agent.id}.toml`, content, hash: sha256(content), isJson: false });
+          const relPath = `.codex/agents/${agent.id}.toml`;
+          outputs.push({ target: 'codex', kind: 'agent', id: agent.id, source: agent.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('codex', 'agent'), inventory: [{ version: 1, relPath, format: 'toml', selector: '$' }], content, hash: sha256(content), isJson: false });
         }
       }
 
       for (const skill of config.skills) {
         const content = textManagedPayload(skill.frontmatter, skill.body);
-        outputs.push({ target: 'codex', kind: 'skill', id: skill.id, source: skill.source.relPath, relPath: `.agents/skills/${skill.id}/SKILL.md`, content, hash: sha256(content), isJson: false });
+        const relPath = `.agents/skills/${skill.id}/SKILL.md`;
+        outputs.push({ target: 'codex', kind: 'skill', id: skill.id, source: skill.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('codex', 'skill'), inventory: [{ version: 1, relPath, format: 'markdown', selector: '$' }], content, hash: sha256(content), isJson: false });
         for (const asset of skill.assets) {
-          outputs.push({ target: 'codex', kind: 'skill', id: skill.id, source: asset.source.relPath, relPath: skillAssetTargetPath('codex', skill.id, asset), sourceFile: asset.source.absPath, hash: asset.hash, isJson: false });
+          const relPath = skillAssetTargetPath('codex', skill.id, asset);
+          outputs.push({ target: 'codex', kind: 'skill', id: skill.id, source: asset.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('codex', 'skill'), inventory: [{ version: 1, relPath, format: 'file', selector: '$' }], sourceFile: asset.source.absPath, hash: asset.hash, isJson: false });
         }
       }
 
@@ -110,7 +126,8 @@ function codexAdapter(): TargetAdapter {
         }
         const content = `${lines.join('\n').trimEnd()}\n`;
         for (const mcp of config.mcps) {
-          outputs.push({ target: 'codex', kind: 'mcp', id: mcp.id, source: mcp.source.relPath, relPath: '.codex/config.toml', content, hash: sha256(content), isJson: false });
+          const relPath = '.codex/config.toml';
+          outputs.push({ target: 'codex', kind: 'mcp', id: mcp.id, source: mcp.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('codex', 'mcp'), inventory: [{ version: 1, relPath, format: 'toml', selector: `mcp_servers.${mcp.id}` }], content, hash: sha256(content), isJson: false });
         }
       }
 
@@ -128,14 +145,17 @@ function opencodeAdapter(): TargetAdapter {
       for (const agent of config.agents) {
         const frontmatter = { name: agent.id, description: agent.description ?? agent.name ?? agent.id };
         const content = textManagedPayload(frontmatter, agent.instructions);
-        outputs.push({ target: 'opencode', kind: 'agent', id: agent.id, source: agent.source.relPath, relPath: `.opencode/agents/${agent.id}.md`, content, hash: sha256(content), isJson: false });
+        const relPath = `.opencode/agents/${agent.id}.md`;
+        outputs.push({ target: 'opencode', kind: 'agent', id: agent.id, source: agent.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('opencode', 'agent'), inventory: [{ version: 1, relPath, format: 'markdown', selector: '$' }], content, hash: sha256(content), isJson: false });
       }
 
       for (const skill of config.skills) {
         const content = textManagedPayload(skill.frontmatter, skill.body);
-        outputs.push({ target: 'opencode', kind: 'skill', id: skill.id, source: skill.source.relPath, relPath: `.opencode/skills/${skill.id}/SKILL.md`, content, hash: sha256(content), isJson: false });
+        const relPath = `.opencode/skills/${skill.id}/SKILL.md`;
+        outputs.push({ target: 'opencode', kind: 'skill', id: skill.id, source: skill.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('opencode', 'skill'), inventory: [{ version: 1, relPath, format: 'markdown', selector: '$' }], content, hash: sha256(content), isJson: false });
         for (const asset of skill.assets) {
-          outputs.push({ target: 'opencode', kind: 'skill', id: skill.id, source: asset.source.relPath, relPath: skillAssetTargetPath('opencode', skill.id, asset), sourceFile: asset.source.absPath, hash: asset.hash, isJson: false });
+          const relPath = skillAssetTargetPath('opencode', skill.id, asset);
+          outputs.push({ target: 'opencode', kind: 'skill', id: skill.id, source: asset.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('opencode', 'skill'), inventory: [{ version: 1, relPath, format: 'file', selector: '$' }], sourceFile: asset.source.absPath, hash: asset.hash, isJson: false });
         }
       }
 
@@ -148,7 +168,8 @@ function opencodeAdapter(): TargetAdapter {
         ]));
         const content = `${JSON.stringify({ mcp }, null, 2)}\n`;
         for (const server of config.mcps) {
-          outputs.push({ target: 'opencode', kind: 'mcp', id: server.id, source: server.source.relPath, relPath: '.opencode/opencode.json', content, hash: sha256(content), isJson: true });
+          const relPath = '.opencode/opencode.json';
+          outputs.push({ target: 'opencode', kind: 'mcp', id: server.id, source: server.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('opencode', 'mcp'), inventory: [{ version: 1, relPath, format: 'json', selector: `$.mcp.${server.id}` }], content, hash: sha256(content), isJson: true });
         }
       }
 
