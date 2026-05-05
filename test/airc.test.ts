@@ -111,6 +111,39 @@ describe('runtime config + adapters', () => {
     expect(opencode.some((entry) => entry.relPath === '.opencode/agents/reviewer.md')).toBe(true);
   });
 
+  it('preserves skill frontmatter semantics across codex/opencode/claude adapters', async () => {
+    const root = await makeTmp();
+    await seed(root);
+    const sourceRoot = path.join(root, '.airc');
+    const config = await buildRuntimeConfig({
+      root: sourceRoot,
+      agents: await loadAgents(sourceRoot),
+      skills: await loadSkills(sourceRoot),
+      mcps: await loadMcps(sourceRoot)
+    });
+
+    const claudeSkill = adapterFor('claude')
+      .plan(config, 'project')
+      .find((entry) => entry.kind === 'skill' && entry.relPath === '.claude/skills/project-gates/SKILL.md');
+    const codexSkill = adapterFor('codex')
+      .plan(config, 'project')
+      .find((entry) => entry.kind === 'skill' && entry.relPath === '.agents/skills/project-gates/SKILL.md');
+    const opencodeSkill = adapterFor('opencode')
+      .plan(config, 'project')
+      .find((entry) => entry.kind === 'skill' && entry.relPath === '.opencode/skills/project-gates/SKILL.md');
+
+    expect(claudeSkill?.content).toContain('description: "claude override"');
+    expect(claudeSkill?.content).not.toContain('vendor:');
+
+    expect(codexSkill?.content).toContain('name: "project-gates"');
+    expect(codexSkill?.content).toContain('description: "project checks"');
+    expect(codexSkill?.content).not.toContain('vendor:');
+
+    expect(opencodeSkill?.content).toContain('name: "project-gates"');
+    expect(opencodeSkill?.content).toContain('description: "project checks"');
+    expect(opencodeSkill?.content).not.toContain('vendor:');
+  });
+
   it('registers adapters in table-driven list', () => {
     expect(TARGET_ADAPTERS.map((adapter) => adapter.target).sort()).toEqual(['claude', 'codex', 'opencode']);
   });
