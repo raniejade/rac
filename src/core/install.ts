@@ -1,16 +1,18 @@
 import { copyFile, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { adapterFor } from '../adapters/target-adapters.js';
+import { adapterFor, vendorManifestRelPath } from '../adapters/target-adapters.js';
 
 import { buildRuntimeConfig } from './config-model.js';
-import { loadManifest, manifestPath, saveManifest } from './manifest.js';
+import { deleteManifest, loadManifest, saveManifest } from './manifest.js';
 import { loadAgents, loadMcps, loadSkills } from './parsers.js';
 import { sourceRoot } from './scope.js';
-import type { InstallManifest, InstallOptions, InstallResult, ManifestRecord } from './types.js';
+import type { InstallManifest, InstallOptions, InstallResult, Kind, ManifestRecord, Target } from './types.js';
 import { AIRC_MARKER, FM_SENSITIVE_MARKER } from './util.js';
 
 type PlannedWrite = ManifestRecord & {
+  manifestRelPath: string;
+  absPath: string;
   content?: string;
   sourceFile?: string;
   isJson?: boolean;
@@ -25,18 +27,28 @@ async function exists(filePath: string): Promise<boolean> {
   }
 }
 
-function isManifestOwned(filePath: string, manifest: InstallManifest): boolean {
-  return manifest.records.some((record) => record.path === filePath);
+function stableKey(record: Pick<ManifestRecord, 'target' | 'kind' | 'id' | 'relPath'>): string {
+  return `${record.target}:${record.kind}:${record.id}:${record.relPath}`;
 }
 
-async function canOverwrite(filePath: string, manifest: InstallManifest, force: boolean, isJson: boolean): Promise<boolean> {
+async function canOverwrite(filePath: string, ownedRelPaths: Set<string>, relPath: string, force: boolean, isJson: boolean): Promise<boolean> {
   if (!(await exists(filePath))) return true;
   if (force) return true;
-  if (isManifestOwned(filePath, manifest)) return true;
+  if (ownedRelPaths.has(relPath)) return true;
   if (isJson) return false;
 
   const existing = await readFile(filePath, 'utf8');
   return existing.includes(AIRC_MARKER) || existing.includes(FM_SENSITIVE_MARKER);
+}
+
+function selectedManifestRelPaths(targets: Target[], kinds: Kind[]): Set<string> {
+  const selected = new Set<string>();
+  for (const target of targets) {
+    for (const kind of kinds) {
+      selected.add(vendorManifestRelPath(target, kind));
+    }
+  }
+  return selected;
 }
 
 export async function initScope(scope: 'project' | 'user', cwd: string, empty = false): Promise<void> {
@@ -113,8 +125,16 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
   const root = sourceRoot(options.scope, options.cwd);
   const targetRoot = options.scope === 'project' ? options.cwd : process.env.HOME || '';
 
-  const manifestFile = manifestPath(options.scope, options.cwd);
-  const manifest = await loadManifest(manifestFile);
+  const manifestsByRelPath = new Map<string, InstallManifest>();
+  for (const relPath of selectedManifestRelPaths(options.targets, options.kinds)) {
+    manifestsByRelPath.set(relPath, await loadManifest(path.join(targetRoot, relPath)));
+  }
+
+  const ownedRelPaths = new Set<string>();
+  for (const manifest of manifestsByRelPath.values()) {
+    for (const record of manifest.records) ownedRelPaths.add(record.relPath);
+  }
+
   const plan: PlannedWrite[] = [];
 
   const parsedAgents = options.kinds.includes('agent') ? await loadAgents(root) : [];
@@ -126,15 +146,17 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
     const adapter = adapterFor(target);
     const outputs = adapter.plan(config, options.scope);
     for (const output of outputs) {
-      const outPath = path.join(targetRoot, output.relPath);
       plan.push({
         version: 1,
         target: output.target,
         kind: output.kind,
         id: output.id,
         source: output.source,
-        path: outPath,
+        relPath: output.relPath,
         hash: output.hash,
+        inventory: output.inventory,
+        manifestRelPath: output.manifestRelPath,
+        absPath: path.join(targetRoot, output.relPath),
         content: output.content,
         sourceFile: output.sourceFile,
         isJson: output.isJson
@@ -148,58 +170,85 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
   const checkedOverwritePath = new Set<string>();
   const appliedWriteByPath = new Set<string>();
   for (const write of plan) {
-    if (!checkedOverwritePath.has(write.path)) {
-      if (!(await canOverwrite(write.path, manifest, !!options.force, !!write.isJson))) {
-        throw new Error(`refusing overwrite unmanaged file: ${write.path}`);
+    if (!checkedOverwritePath.has(write.absPath)) {
+      if (!(await canOverwrite(write.absPath, ownedRelPaths, write.relPath, !!options.force, !!write.isJson))) {
+        throw new Error(`refusing overwrite unmanaged file: ${write.absPath}`);
       }
-      checkedOverwritePath.add(write.path);
+      checkedOverwritePath.add(write.absPath);
     }
 
-    const alreadyExists = await exists(write.path);
-    if (!seenResultPath.has(write.path)) {
-      if (alreadyExists) update.push(write.path); else create.push(write.path);
-      seenResultPath.add(write.path);
+    const alreadyExists = await exists(write.absPath);
+    if (!seenResultPath.has(write.absPath)) {
+      if (alreadyExists) update.push(write.absPath); else create.push(write.absPath);
+      seenResultPath.add(write.absPath);
     }
 
-    if (!options.dryRun && !appliedWriteByPath.has(write.path)) {
-      await mkdir(path.dirname(write.path), { recursive: true });
+    if (!options.dryRun && !appliedWriteByPath.has(write.absPath)) {
+      await mkdir(path.dirname(write.absPath), { recursive: true });
       if (write.sourceFile) {
-        await copyFile(write.sourceFile, write.path);
+        await copyFile(write.sourceFile, write.absPath);
       } else {
-        await writeFile(write.path, write.content ?? '', 'utf8');
+        await writeFile(write.absPath, write.content ?? '', 'utf8');
       }
-      appliedWriteByPath.add(write.path);
+      appliedWriteByPath.add(write.absPath);
     }
   }
 
   const selected = (record: ManifestRecord): boolean => options.targets.includes(record.target) && options.kinds.includes(record.kind);
-  const liveKeys = new Set(plan.map((entry) => `${entry.target}:${entry.kind}:${entry.id}:${entry.path}`));
-  const stale = manifest.records.filter((record) => selected(record) && !liveKeys.has(`${record.target}:${record.kind}:${record.id}:${record.path}`));
-  const keptOrCurrentPathRefs = new Set([
-    ...manifest.records.filter((record) => !selected(record)).map((record) => record.path),
-    ...plan.map((entry) => entry.path)
-  ]);
+  const liveKeysByManifestRelPath = new Map<string, Set<string>>();
+  for (const write of plan) {
+    const records = liveKeysByManifestRelPath.get(write.manifestRelPath) ?? new Set<string>();
+    records.add(stableKey(write));
+    liveKeysByManifestRelPath.set(write.manifestRelPath, records);
+  }
+
+  const staleByManifestRelPath = new Map<string, ManifestRecord[]>();
+  const keptRelPaths = new Set<string>();
+  for (const [manifestRelPath, manifest] of manifestsByRelPath) {
+    const liveKeys = liveKeysByManifestRelPath.get(manifestRelPath) ?? new Set<string>();
+    for (const record of manifest.records) {
+      if (selected(record) && !liveKeys.has(stableKey(record))) {
+        const stale = staleByManifestRelPath.get(manifestRelPath) ?? [];
+        stale.push(record);
+        staleByManifestRelPath.set(manifestRelPath, stale);
+      } else {
+        keptRelPaths.add(record.relPath);
+      }
+    }
+  }
+  for (const write of plan) keptRelPaths.add(write.relPath);
 
   const del: string[] = [];
   const seenDeletePath = new Set<string>();
   if (options.clean) {
-    for (const staleRecord of stale) {
-      const isStillReferenced = keptOrCurrentPathRefs.has(staleRecord.path);
-      if (isStillReferenced || options.dryRun || seenDeletePath.has(staleRecord.path)) {
-        continue;
-      }
-      if (await exists(staleRecord.path)) {
-        await rm(staleRecord.path, { recursive: true, force: true });
-        del.push(staleRecord.path);
-        seenDeletePath.add(staleRecord.path);
+    for (const staleRecords of staleByManifestRelPath.values()) {
+      for (const staleRecord of staleRecords) {
+        if (keptRelPaths.has(staleRecord.relPath)) continue;
+        const absPath = path.join(targetRoot, staleRecord.relPath);
+        if (options.dryRun || seenDeletePath.has(absPath)) continue;
+        if (await exists(absPath)) {
+          await rm(absPath, { recursive: true, force: true });
+          del.push(absPath);
+          seenDeletePath.add(absPath);
+        }
       }
     }
   }
 
   if (!options.dryRun) {
-    const keep = manifest.records.filter((record) => !selected(record));
-    const current = plan.map(({ version, target, kind, id, source, path, hash }) => ({ version, target, kind, id, source, path, hash }));
-    await saveManifest(manifestFile, { version: 1, records: [...keep, ...current] });
+    for (const [manifestRelPath, manifest] of manifestsByRelPath) {
+      const keep = manifest.records.filter((record) => !selected(record));
+      const current = plan
+        .filter((record) => record.manifestRelPath === manifestRelPath)
+        .map(({ version, target, kind, id, source, relPath, hash, inventory }) => ({ version, target, kind, id, source, relPath, hash, inventory }));
+      const next = { version: 1 as const, records: [...keep, ...current] };
+      const manifestPath = path.join(targetRoot, manifestRelPath);
+      if (next.records.length === 0) {
+        await deleteManifest(manifestPath);
+      } else {
+        await saveManifest(manifestPath, next);
+      }
+    }
   }
 
   return { create, update, del };

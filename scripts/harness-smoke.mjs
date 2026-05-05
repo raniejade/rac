@@ -63,7 +63,10 @@ async function main() {
     await expectExists(path.join(sampleRepo, '.airc', 'agents', 'reviewer.toml'));
     await expectExists(path.join(sampleRepo, '.airc', 'skills', 'project-gates', 'SKILL.md'));
     await expectExists(path.join(sampleRepo, '.airc', 'mcps', 'project-rules.toml'));
-    await expectExists(path.join(sampleRepo, '.airc', '.install-manifest.json'));
+    await expectExists(path.join(sampleRepo, '.codex', '.airc-install-manifest.json'));
+    await expectExists(path.join(sampleRepo, '.agents', '.airc-install-manifest.json'));
+    await expectExists(path.join(sampleRepo, '.claude', '.airc-install-manifest.json'));
+    await expectExists(path.join(sampleRepo, '.opencode', '.airc-install-manifest.json'));
 
     await expectExists(path.join(sampleRepo, '.codex', 'agents', 'reviewer.toml'));
     await expectExists(path.join(sampleRepo, '.agents', 'skills', 'project-gates', 'SKILL.md'));
