@@ -1,0 +1,124 @@
+# AIRC Architecture
+
+## Pipeline (Current)
+
+AIRC is organized as a strict 4-stage flow:
+
+1. Parsed source files
+2. Common runtime representation
+3. Vendor-specific adapters
+4. Centralized install writer with manifest safety
+
+The core ownership rule is: upstream stages do not know about downstream file formats.
+
+## 1) Parsed Source Files (`src/core/parsers.ts`)
+
+Inputs are loaded from the scoped source root:
+
+- `agents/*.toml`
+- `skills/*/SKILL.md` with `+++` frontmatter
+- `mcps/*.toml`
+
+Responsibilities:
+
+- Discover files with deterministic glob patterns
+- Parse and validate schema (`zod`)
+- Enforce structural constraints (duplicate IDs, MCP transport exclusivity, skill frontmatter boundaries)
+- Emit typed source definitions with source-path metadata
+
+Non-responsibilities:
+
+- No vendor output shape decisions
+- No install/write policy
+
+## 2) Common Runtime Representation (`src/core/config-model.ts`)
+
+`buildRuntimeConfig(...)` translates parsed definitions into a vendor-neutral runtime model.
+
+Responsibilities:
+
+- Normalize cross-cutting fields used by all targets
+- Resolve instruction file indirection for agents
+- Resolve skill asset hashes
+- Normalize MCP transport into `local` vs `remote`
+- Collect config warnings as runtime signals
+
+Non-responsibilities:
+
+- No target file path decisions
+- No filesystem writes
+
+This is the integration seam between source parsing and target adapters.
+
+## 3) Vendor-Specific Adapters (`src/adapters/target-adapters.ts`)
+
+Each target adapter maps `RuntimeConfig` into `AdapterOutput[]` write plans.
+
+Current adapters:
+
+- `claude`
+- `codex`
+- `opencode`
+
+Responsibilities:
+
+- Define target-relative output paths
+- Render target-specific content formats
+- Preserve source metadata + deterministic content hash
+- Mark JSON outputs when overwrite policy should be stricter
+
+Non-responsibilities:
+
+- No direct file I/O
+- No manifest mutation
+- No overwrite/delete decision logic
+
+The adapter contract is intentionally small:
+
+- Input: `RuntimeConfig` (+ scope when needed)
+- Output: declarative write plan (`AdapterOutput`)
+
+## 4) Centralized Install Writer + Manifest Safety (`src/core/install.ts`, `src/core/manifest.ts`)
+
+`install(...)` is the only write/delete orchestrator.
+
+Responsibilities:
+
+- Build a full plan by combining selected kinds + targets
+- Apply overwrite guardrails (`canOverwrite`) with managed-file checks
+- Write files (content or asset copy) exactly once per destination path
+- Optionally clean stale managed outputs
+- Persist install manifest at `.airc/.install-manifest.json` (project or user scope)
+
+Safety model:
+
+- Managed ownership is tracked in the install manifest
+- Unmanaged files are protected from overwrite unless explicit conditions are met (`force`, manifest-owned, or managed markers for text outputs)
+- Deletions are constrained to stale manifest-owned outputs when `clean` is enabled
+
+This keeps write policy centralized and consistent across all vendors.
+
+## Ownership Boundaries Summary
+
+- `parsers.ts`: file discovery + schema validation only
+- `config-model.ts`: runtime normalization only
+- `target-adapters.ts`: vendor rendering + path planning only
+- `install.ts`/`manifest.ts`: write/delete policy + state tracking only
+
+If behavior belongs to more than one stage, prefer moving it earlier as normalized data rather than duplicating it in multiple adapters.
+
+## Adding a New Vendor
+
+1. Add target literal in core types (`Target` in `src/core/types.ts`).
+2. Implement a new adapter in `src/adapters/target-adapters.ts`:
+   - Create `<vendor>Adapter(): TargetAdapter`
+   - Map `RuntimeConfig` to deterministic `AdapterOutput[]`
+   - Define target-relative output paths and content
+3. Register adapter in `TARGET_ADAPTERS`.
+4. Ensure CLI target parsing accepts the new target (if target list is enforced there).
+5. Add tests covering:
+   - Adapter output paths/content
+   - Install behavior for create/update/clean with manifest ownership
+6. Validate full pipeline with lint/typecheck/test/build.
+
+Design rule: do not bypass the shared runtime model or install writer. Vendor logic belongs only in adapter planning.
