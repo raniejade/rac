@@ -1,6 +1,7 @@
 import { copyFile, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { emitAgent, emitMcp, emitSkill, skillAssetTargetPath } from '../adapters/emitters.js';
+import crypto from 'node:crypto';
+import { emitAgent, emitMcps, emitSkill, skillAssetTargetPath } from '../adapters/emitters.js';
 import { loadManifest, manifestPath, saveManifest } from './manifest.js';
 import { loadAgents, loadMcps, loadSkills } from './parsers.js';
 import { sourceRoot } from './scope.js';
@@ -120,14 +121,13 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
 
   for (const target of options.targets) {
     for (const agent of agents) {
-      const emitted = emitAgent(target, agent);
       let agentBody = agent.instructions;
       if (agent.instructions.startsWith('./') || agent.instructions.startsWith('../')) {
         const instructionFile = assertNoTraversal(path.dirname(agent.sourcePath), agent.instructions, 'agent instructions');
         agentBody = await readFile(instructionFile, 'utf8');
       }
-
-      const content = emitted.content.replace(agent.instructions, agentBody);
+      const emitted = emitAgent(target, { ...agent, instructions: agentBody });
+      const content = emitted.content;
       const outPath = path.join(targetRoot, emitted.relPath);
       plan.push({
         version: 1,
@@ -161,6 +161,7 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
       for (const assetRelativePath of skill.assets) {
         const sourceFile = assertNoTraversal(path.dirname(skill.sourcePath), assetRelativePath, 'skill asset');
         const targetRelativePath = skillAssetTargetPath(target, skill.id, assetRelativePath);
+        const assetHash = crypto.createHash('sha256').update(await readFile(sourceFile)).digest('hex');
         plan.push({
           version: 1,
           target,
@@ -168,60 +169,80 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
           id: skill.id,
           source: rel(root, sourceFile),
           path: path.join(targetRoot, targetRelativePath),
-          hash: '',
+          hash: assetHash,
           sourceFile,
           isJson: false
         });
       }
     }
 
-    for (const mcp of mcps) {
-      const emitted = emitMcp(target, mcp, options.scope);
+    if (mcps.length > 0) {
+      const emitted = emitMcps(target, mcps, options.scope);
       const outPath = path.join(targetRoot, emitted.relPath);
-
-      plan.push({
-        version: 1,
-        target,
-        kind: 'mcp',
-        id: mcp.id,
-        source: rel(root, mcp.sourcePath),
-        path: outPath,
-        hash: sha256(emitted.content),
-        content: emitted.content,
-        isJson: emitted.isJson
-      });
+      for (const mcp of mcps) {
+        plan.push({
+          version: 1,
+          target,
+          kind: 'mcp',
+          id: mcp.id,
+          source: rel(root, mcp.sourcePath),
+          path: outPath,
+          hash: sha256(emitted.content),
+          content: emitted.content,
+          isJson: emitted.isJson
+        });
+      }
     }
   }
 
   const create: string[] = [];
   const update: string[] = [];
+  const seenResultPath = new Set<string>();
+  const checkedOverwritePath = new Set<string>();
+  const appliedWriteByPath = new Set<string>();
   for (const write of plan) {
-    if (!(await canOverwrite(write.path, manifest, !!options.force, !!write.isJson))) {
-      throw new Error(`refusing overwrite unmanaged file: ${write.path}`);
+    if (!checkedOverwritePath.has(write.path)) {
+      if (!(await canOverwrite(write.path, manifest, !!options.force, !!write.isJson))) {
+        throw new Error(`refusing overwrite unmanaged file: ${write.path}`);
+      }
+      checkedOverwritePath.add(write.path);
     }
 
     const alreadyExists = await exists(write.path);
-    if (alreadyExists) update.push(write.path); else create.push(write.path);
+    if (!seenResultPath.has(write.path)) {
+      if (alreadyExists) update.push(write.path); else create.push(write.path);
+      seenResultPath.add(write.path);
+    }
 
-    if (!options.dryRun) {
+    if (!options.dryRun && !appliedWriteByPath.has(write.path)) {
       await mkdir(path.dirname(write.path), { recursive: true });
       if (write.sourceFile) {
         await copyFile(write.sourceFile, write.path);
       } else {
         await writeFile(write.path, write.content ?? '', 'utf8');
       }
+      appliedWriteByPath.add(write.path);
     }
   }
 
   const selected = (record: ManifestRecord): boolean => options.targets.includes(record.target) && options.kinds.includes(record.kind);
   const liveKeys = new Set(plan.map((entry) => `${entry.target}:${entry.kind}:${entry.id}:${entry.path}`));
   const stale = manifest.records.filter((record) => selected(record) && !liveKeys.has(`${record.target}:${record.kind}:${record.id}:${record.path}`));
+  const keptOrCurrentPathRefs = new Set([
+    ...manifest.records.filter((record) => !selected(record)).map((record) => record.path),
+    ...plan.map((entry) => entry.path)
+  ]);
 
   const del: string[] = [];
+  const seenDeletePath = new Set<string>();
   if (options.clean) {
     for (const staleRecord of stale) {
-      del.push(staleRecord.path);
-      if (!options.dryRun && (await exists(staleRecord.path))) {
+      if (!seenDeletePath.has(staleRecord.path)) {
+        del.push(staleRecord.path);
+        seenDeletePath.add(staleRecord.path);
+      }
+      const isStillReferenced = keptOrCurrentPathRefs.has(staleRecord.path);
+      if (!isStillReferenced && !options.dryRun && (await exists(staleRecord.path))) {
         await rm(staleRecord.path, { recursive: true, force: true });
       }
     }
@@ -229,9 +250,7 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
 
   if (!options.dryRun) {
     const keep = manifest.records.filter((record) => !selected(record));
-    const current = plan
-      .filter((entry) => !entry.sourceFile)
-      .map(({ version, target, kind, id, source, path, hash }) => ({ version, target, kind, id, source, path, hash }));
+    const current = plan.map(({ version, target, kind, id, source, path, hash }) => ({ version, target, kind, id, source, path, hash }));
     await saveManifest(manifestFile, { version: 1, records: [...keep, ...current] });
   }
 

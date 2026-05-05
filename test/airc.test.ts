@@ -144,6 +144,64 @@ describe('emit + install + doctor', () => {
     expect(await readFile(path.join(root, '.codex/agents/keep.md'), 'utf8')).toBe('keep');
   });
 
+  it('aggregates multiple MCP definitions into one shared target config write', async () => {
+    const root = await makeTmp();
+    await seed(root);
+    await writeFile(path.join(root, '.airc/mcps/remote.toml'), 'id = "remote"\ntype = "sse"\nurl = "https://example.test/mcp"\n', 'utf8');
+
+    await install({ scope: 'project', cwd: root, targets: ['claude', 'codex', 'opencode'], kinds: ['mcp'] });
+
+    const claudeProject = JSON.parse(await readFile(path.join(root, '.mcp.json'), 'utf8')) as { mcpServers: Record<string, unknown> };
+    expect(Object.keys(claudeProject.mcpServers).sort()).toEqual(['project-rules', 'remote']);
+
+    const codexToml = await readFile(path.join(root, '.codex/config.toml'), 'utf8');
+    expect(codexToml).toContain('[mcp_servers.project-rules]');
+    expect(codexToml).toContain('[mcp_servers.remote]');
+
+    const opencode = JSON.parse(await readFile(path.join(root, '.opencode/opencode.json'), 'utf8')) as { mcp: Record<string, unknown> };
+    expect(Object.keys(opencode.mcp).sort()).toEqual(['project-rules', 'remote']);
+  });
+
+  it('clean keeps shared MCP config path when still used by current MCP set', async () => {
+    const root = await makeTmp();
+    await seed(root);
+    await writeFile(path.join(root, '.airc/mcps/remote.toml'), 'id = "remote"\ntype = "sse"\nurl = "https://example.test/mcp"\n', 'utf8');
+    await install({ scope: 'project', cwd: root, targets: ['claude'], kinds: ['mcp'] });
+
+    await rm(path.join(root, '.airc/mcps/remote.toml'));
+    const result = await install({ scope: 'project', cwd: root, targets: ['claude'], kinds: ['mcp'], clean: true });
+    expect(result.del).toContain(path.join(root, '.mcp.json'));
+
+    const kept = JSON.parse(await readFile(path.join(root, '.mcp.json'), 'utf8')) as { mcpServers: Record<string, unknown> };
+    expect(Object.keys(kept.mcpServers)).toEqual(['project-rules']);
+  });
+
+  it('escapes codex TOML instructions when agent instructions come from relative file', async () => {
+    const root = await makeTmp();
+    await mkdir(path.join(root, '.airc/agents'), { recursive: true });
+    await writeFile(path.join(root, '.airc/agents/reviewer.toml'), 'id = "reviewer"\ninstructions = "./reviewer.md"\n', 'utf8');
+    await writeFile(path.join(root, '.airc/agents/reviewer.md'), 'line "one"\nline two\n', 'utf8');
+
+    await install({ scope: 'project', cwd: root, targets: ['codex'], kinds: ['agent'] });
+    const toml = await readFile(path.join(root, '.codex/agents/reviewer.toml'), 'utf8');
+    expect(toml).toContain('instructions = "line \\"one\\"\\nline two\\n"');
+  });
+
+  it('persists skill assets in manifest and keeps reinstall idempotent', async () => {
+    const root = await makeTmp();
+    await seed(root);
+
+    await install({ scope: 'project', cwd: root, targets: ['codex'], kinds: ['skill'] });
+    const manifestOne = JSON.parse(await readFile(path.join(root, '.airc/.install-manifest.json'), 'utf8')) as { records: Array<{ path: string; hash: string; kind: string }> };
+    const assetRecord = manifestOne.records.find((record) => record.path.endsWith(path.join('project-gates', 'checklist.md')));
+    expect(assetRecord?.kind).toBe('skill');
+    expect(assetRecord?.hash && assetRecord.hash.length > 0).toBe(true);
+
+    await expect(install({ scope: 'project', cwd: root, targets: ['codex'], kinds: ['skill'] })).resolves.toBeTruthy();
+    const manifestTwo = JSON.parse(await readFile(path.join(root, '.airc/.install-manifest.json'), 'utf8')) as { records: unknown[] };
+    expect(manifestTwo.records).toEqual(manifestOne.records);
+  });
+
   it('doctor emits expected warnings for env, codex instruction-only, opencode legacy tools', async () => {
     const root = await makeTmp();
     await seed(root);

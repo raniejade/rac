@@ -127,6 +127,45 @@ export function emitMcp(target: Target, mcp: McpDef, scope: Scope): { relPath: s
   return { relPath: '.opencode/opencode.json', content: `${JSON.stringify(payload, null, 2)}\n`, isJson: true };
 }
 
+export function emitMcps(target: Target, mcps: McpDef[], scope: Scope): { relPath: string; content: string; isJson: boolean } {
+  if (target === 'claude') {
+    const relPath = scope === 'project' ? '.mcp.json' : '.claude.json';
+    const mcpServers = Object.fromEntries(mcps.map((mcp) => [
+      mcp.id,
+      mcp.command
+        ? { command: mcp.command, args: mcp.args ?? [] }
+        : { type: mcp.type, url: mcp.url }
+    ]));
+    return { relPath, content: `${JSON.stringify({ mcpServers }, null, 2)}\n`, isJson: true };
+  }
+
+  if (target === 'codex') {
+    const lines = [AIRC_MARKER];
+    for (const mcp of mcps) {
+      const timeoutSec = mcp.startup_timeout_ms ? Math.ceil(mcp.startup_timeout_ms / 1000) : undefined;
+      lines.push(`[mcp_servers.${mcp.id}]`);
+      if (mcp.command) {
+        lines.push(`command = ${JSON.stringify(mcp.command)}`);
+        lines.push(`args = [${(mcp.args ?? []).map((v) => JSON.stringify(v)).join(', ')}]`);
+      } else {
+        lines.push(`type = ${JSON.stringify(mcp.type)}`);
+        lines.push(`url = ${JSON.stringify(mcp.url)}`);
+      }
+      if (timeoutSec) lines.push(`startup_timeout = ${timeoutSec}`);
+      lines.push('');
+    }
+    return { relPath: '.codex/config.toml', content: `${lines.join('\n').trimEnd()}\n`, isJson: false };
+  }
+
+  const mcpPayload = Object.fromEntries(mcps.map((mcp) => [
+    mcp.id,
+    mcp.command
+      ? { command: [mcp.command, ...(mcp.args ?? [])] }
+      : { type: 'remote', url: mcp.url }
+  ]));
+  return { relPath: '.opencode/opencode.json', content: `${JSON.stringify({ mcp: mcpPayload }, null, 2)}\n`, isJson: true };
+}
+
 export function skillAssetTargetPath(target: Target, skillId: string, assetRelativePath: string): string {
   if (target === 'claude') return path.join('.claude/skills', skillId, assetRelativePath);
   if (target === 'codex') return path.join('.agents/skills', skillId, assetRelativePath);
