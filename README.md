@@ -5,10 +5,10 @@ Install `.airc` agent/skill/MCP definitions into Claude, Codex, and OpenCode con
 ## Run with npx
 
 ```bash
-npx airc@latest init --scope project
-npx airc@latest doctor --scope project
-npx airc@latest install --scope project --dry-run
-npx airc@latest install --scope project
+npx github:raniejade/airc init --scope project
+npx github:raniejade/airc doctor --scope project
+npx github:raniejade/airc install --scope project --dry-run
+npx github:raniejade/airc install --scope project
 ```
 
 `airc install` supports:
