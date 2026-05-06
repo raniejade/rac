@@ -8,7 +8,7 @@ import { parse } from 'smol-toml';
 import { z } from 'zod';
 
 import type { AgentDef, McpDef, PackRuntime, PackSpec, RuleCommandItem, RuleDef, SkillDef } from './types.js';
-import { collectEnvVarsFromText } from './util.js';
+import { collectEnvVarsFromText, normalizeDefinitionId } from './util.js';
 
 const PACK_ID_RE = /^[A-Za-z0-9._-]+$/;
 const GITHUB_REPO_RE = /^github:([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)$/;
@@ -94,6 +94,7 @@ async function ensureSharedPack(spec: PackSpec): Promise<PackRuntime> {
 function mapId<T extends { id: string }>(items: T[], kind: string): void {
   const seen = new Set<string>();
   for (const item of items) {
+    item.id = normalizeDefinitionId(kind, item.id);
     if (seen.has(item.id)) throw new Error(`duplicate ${kind} id: ${item.id}`);
     seen.add(item.id);
   }
@@ -144,7 +145,7 @@ export async function loadAgents(root: string, packId: string): Promise<AgentDef
   const out = [] as AgentDef[];
   for (const file of files) {
     const parsed = agentSchema.parse(parseTomlOrThrow(file, await readFile(file, 'utf8')));
-    out.push({ pack: packId, packRoot: root, ...parsed, sourcePath: file, sourceName: path.relative(root, file) });
+    out.push({ pack: packId, packRoot: root, ...parsed, id: normalizeDefinitionId('agent', parsed.id), sourcePath: file, sourceName: path.relative(root, file) });
   }
   mapId(out, 'agent');
   return out;
@@ -154,7 +155,7 @@ export async function loadSkills(root: string, packId: string): Promise<SkillDef
   const files = await fg('skills/*/SKILL.md', { cwd: root, absolute: true });
   const out: SkillDef[] = [];
   for (const file of files) {
-    const id = path.basename(path.dirname(file));
+    const id = normalizeDefinitionId('skill', path.basename(path.dirname(file)));
     const raw = await readFile(file, 'utf8');
     if (!raw.startsWith('+++')) throw new Error(`skill frontmatter must start with +++ at byte 0: ${file}`);
     const closingIndex = raw.indexOf('\n+++\n', 3);
@@ -171,7 +172,7 @@ export async function loadMcps(root: string, packId: string): Promise<McpDef[]> 
   const out = [] as McpDef[];
   for (const file of files) {
     const parsed = mcpSchema.parse(parseTomlOrThrow(file, await readFile(file, 'utf8')));
-    out.push({ pack: packId, packRoot: root, ...parsed, envVars: collectEnvVarsFromText(JSON.stringify(parsed)), sourcePath: file, sourceName: path.relative(root, file) });
+    out.push({ pack: packId, packRoot: root, ...parsed, id: normalizeDefinitionId('mcp', parsed.id), envVars: collectEnvVarsFromText(JSON.stringify(parsed)), sourcePath: file, sourceName: path.relative(root, file) });
   }
   mapId(out, 'mcp');
   return out;
@@ -199,9 +200,10 @@ export async function loadRules(root: string, packId: string): Promise<RuleDef[]
         for (const entry of item) if (!entry.trim()) throw new Error(`empty command alternative for rule ${parsed.id}`);
         return item;
       });
-      if (ids.has(parsed.id)) throw new Error(`duplicate rule id: ${parsed.id}`);
-      ids.add(parsed.id);
-      out.push({ pack: packId, packRoot: root, id: parsed.id, decision: 'forbidden', justification: parsed.justification, command: normalized, append_wildcard: parsed.append_wildcard ?? true, sourcePath: file, sourceName: path.relative(root, file) });
+      const id = normalizeDefinitionId('rule', parsed.id);
+      if (ids.has(id)) throw new Error(`duplicate rule id: ${id}`);
+      ids.add(id);
+      out.push({ pack: packId, packRoot: root, id, decision: 'forbidden', justification: parsed.justification, command: normalized, append_wildcard: parsed.append_wildcard ?? true, sourcePath: file, sourceName: path.relative(root, file) });
     }
   }
   return out;

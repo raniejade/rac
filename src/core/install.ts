@@ -7,7 +7,7 @@ import { buildRuntimeConfig } from './config-model.js';
 import { deleteManifest, loadManifest, saveManifest } from './manifest.js';
 import { loadAgents, loadMcps, loadRules, loadSkills, resolvePacks } from './parsers.js';
 import type { InstallManifest, InstallOptions, InstallResult, Kind, ManifestRecord, Target } from './types.js';
-import { RAC_MARKER, FM_SENSITIVE_MARKER, sha256 } from './util.js';
+import { FM_SENSITIVE_MARKER, RAC_MARKER, resolveContainedPath, sha256 } from './util.js';
 
 type PlannedWrite = ManifestRecord & {
   manifestRelPath: string;
@@ -182,7 +182,7 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
 
   const manifestsByRelPath = new Map<string, InstallManifest>();
   for (const relPath of selectedManifestRelPaths(options.targets, ALL_KINDS)) {
-    manifestsByRelPath.set(relPath, await loadManifest(path.join(targetRoot, relPath)));
+    manifestsByRelPath.set(relPath, await loadManifest(targetRoot, relPath));
   }
 
   const ownedRelPaths = new Set<string>();
@@ -223,7 +223,7 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
         hash: output.hash,
         inventory: output.inventory,
         manifestRelPath: output.manifestRelPath,
-        absPath: path.join(targetRoot, output.relPath),
+        absPath: resolveContainedPath(targetRoot, output.relPath, 'adapter output path'),
         content: output.content,
         sourceFile: output.sourceFile,
         isJson: output.isJson
@@ -262,8 +262,9 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
       if (!isManagedOpenCodeSharedJson(record)) continue;
       if (options.targets.includes(record.target) && !options.kinds.includes(record.kind)) siblingKinds.add(record.kind);
     }
-    if (siblingKinds.size > 0 && (await exists(path.join(targetRoot, '.opencode/opencode.json')))) {
-      const existingRaw = await readFile(path.join(targetRoot, '.opencode/opencode.json'), 'utf8');
+    const opencodeSharedPath = resolveContainedPath(targetRoot, '.opencode/opencode.json', 'shared opencode path');
+    if (siblingKinds.size > 0 && (await exists(opencodeSharedPath))) {
+      const existingRaw = await readFile(opencodeSharedPath, 'utf8');
       const existingParsed = JSON.parse(existingRaw) as Record<string, unknown>;
       const generatedParsed = JSON.parse(opencodeSharedWrites[0].content ?? '{}') as Record<string, unknown>;
       if (siblingKinds.has('mcp') && !Object.prototype.hasOwnProperty.call(generatedParsed, 'mcp') && Object.prototype.hasOwnProperty.call(existingParsed, 'mcp')) {
@@ -346,7 +347,7 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
   let cleanRewriteOpenCodeShared: { absPath: string; content: string; hash: string } | undefined;
   if (options.clean && options.targets.includes('opencode') && (options.kinds.includes('mcp') || options.kinds.includes('rule'))) {
     const sharedRelPath = '.opencode/opencode.json';
-    const absPath = path.join(targetRoot, sharedRelPath);
+    const absPath = resolveContainedPath(targetRoot, sharedRelPath, 'shared opencode path');
     const sharedManifestRecords = (recordsByRelPath.get(sharedRelPath) ?? []).filter(isManagedOpenCodeSharedJson);
     const hasUnselectedSibling = sharedManifestRecords.some((record) => !selected(record));
     if (hasUnselectedSibling && (await exists(absPath))) {
@@ -380,7 +381,7 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
     for (const staleRecords of staleByManifestRelPath.values()) {
       for (const staleRecord of staleRecords) {
         if (keptRelPaths.has(staleRecord.relPath)) continue;
-        const absPath = path.join(targetRoot, staleRecord.relPath);
+        const absPath = resolveContainedPath(targetRoot, staleRecord.relPath, 'stale manifest record path');
         if (options.dryRun || options.check || seenDeletePath.has(absPath)) continue;
         if (await exists(absPath)) {
           await rm(absPath, { recursive: true, force: true });
@@ -419,7 +420,7 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
     for (const [manifestRelPath, next] of nextManifestsByRelPath) {
       const current = manifestsByRelPath.get(manifestRelPath) ?? { version: 1, records: [] };
       if (JSON.stringify(current) !== JSON.stringify(next)) {
-        failures.push(`manifest would change: ${path.join(targetRoot, manifestRelPath)}`);
+        failures.push(`manifest would change: ${resolveContainedPath(targetRoot, manifestRelPath, 'manifest path')}`);
       }
     }
 
@@ -433,7 +434,7 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
 
     for (const staleRecords of staleByManifestRelPath.values()) {
       for (const staleRecord of staleRecords) {
-        failures.push(`stale managed output requires cleanup: ${path.join(targetRoot, staleRecord.relPath)}`);
+        failures.push(`stale managed output requires cleanup: ${resolveContainedPath(targetRoot, staleRecord.relPath, 'stale manifest record path')}`);
       }
     }
 
@@ -449,11 +450,10 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
       await writeFile(cleanRewriteOpenCodeShared.absPath, cleanRewriteOpenCodeShared.content, 'utf8');
     }
     for (const [manifestRelPath, next] of nextManifestsByRelPath) {
-      const manifestPath = path.join(targetRoot, manifestRelPath);
       if (next.records.length === 0) {
-        await deleteManifest(manifestPath);
+        await deleteManifest(targetRoot, manifestRelPath);
       } else {
-        await saveManifest(manifestPath, next);
+        await saveManifest(targetRoot, manifestRelPath, next);
       }
     }
   }

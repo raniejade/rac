@@ -2,7 +2,7 @@ import path from 'node:path';
 
 import type { RuntimeConfig, SkillAssetConfig } from '../core/config-model.js';
 import type { Kind, ManagedInventoryEntry, Pack, Target } from '../core/types.js';
-import { RAC_MARKER, sha256 } from '../core/util.js';
+import { jsonPathBracketSelector, RAC_MARKER, sha256, tomlQuotedKeySegment } from '../core/util.js';
 
 import { textManagedPayload } from './shared.js';
 
@@ -52,9 +52,9 @@ export function vendorManifestRelPath(target: Target, kind: Kind): string {
 }
 
 function skillAssetTargetPath(target: Target, skillId: string, asset: SkillAssetConfig): string {
-  if (target === 'claude') return path.join('.claude/skills', skillId, asset.relativePath);
-  if (target === 'codex') return path.join('.agents/skills', skillId, asset.relativePath);
-  return path.join('.opencode/skills', skillId, asset.relativePath);
+  if (target === 'claude') return path.posix.join('.claude/skills', skillId, asset.relativePath);
+  if (target === 'codex') return path.posix.join('.agents/skills', skillId, asset.relativePath);
+  return path.posix.join('.opencode/skills', skillId, asset.relativePath);
 }
 
 function claudeAdapter(): TargetAdapter {
@@ -96,7 +96,7 @@ function claudeAdapter(): TargetAdapter {
         ]));
         const content = `${JSON.stringify({ mcpServers }, null, 2)}\n`;
         for (const mcp of config.mcps) {
-          outputs.push({ pack: mcp.pack, target: 'claude', kind: 'mcp', id: mcp.id, source: mcp.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('claude', 'mcp'), inventory: [{ version: 1, format: 'json', selector: `$.mcpServers.${mcp.id}` }], content, hash: sha256(content), isJson: true });
+          outputs.push({ pack: mcp.pack, target: 'claude', kind: 'mcp', id: mcp.id, source: mcp.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('claude', 'mcp'), inventory: [{ version: 1, format: 'json', selector: jsonPathBracketSelector(['mcpServers', mcp.id]) }], content, hash: sha256(content), isJson: true });
         }
       }
 
@@ -171,7 +171,7 @@ function codexAdapter(): TargetAdapter {
       if (config.mcps.length > 0) {
         const lines = [RAC_MARKER];
         for (const mcp of [...config.mcps].sort((a, b) => a.id.localeCompare(b.id))) {
-          lines.push(`[mcp_servers.${mcp.id}]`);
+          lines.push(`[mcp_servers.${tomlQuotedKeySegment(mcp.id)}]`);
           const generated: Record<string, unknown> = mcp.transport.kind === 'local'
             ? { command: mcp.transport.command, args: mcp.transport.args }
             : { type: mcp.transport.type, url: mcp.transport.url };
@@ -183,7 +183,7 @@ function codexAdapter(): TargetAdapter {
         const content = `${lines.join('\n').trimEnd()}\n`;
         for (const mcp of config.mcps) {
           const relPath = '.codex/config.toml';
-          outputs.push({ pack: mcp.pack, target: 'codex', kind: 'mcp', id: mcp.id, source: mcp.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('codex', 'mcp'), inventory: [{ version: 1, format: 'toml', selector: `mcp_servers.${mcp.id}` }], content, hash: sha256(content), isJson: false });
+          outputs.push({ pack: mcp.pack, target: 'codex', kind: 'mcp', id: mcp.id, source: mcp.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('codex', 'mcp'), inventory: [{ version: 1, format: 'toml', selector: `mcp_servers.${tomlQuotedKeySegment(mcp.id)}` }], content, hash: sha256(content), isJson: false });
         }
       }
 
@@ -274,7 +274,7 @@ function opencodeAdapter(): TargetAdapter {
         const content = `${JSON.stringify({ ...(config.mcps.length > 0 ? { mcp } : {}), ...(config.rules.length > 0 ? { permission: { bash } } : {}) }, null, 2)}\n`;
         for (const server of config.mcps) {
           const relPath = '.opencode/opencode.json';
-          outputs.push({ pack: server.pack, target: 'opencode', kind: 'mcp', id: server.id, source: server.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('opencode', 'mcp'), inventory: [{ version: 1, format: 'json', selector: `$.mcp.${server.id}` }], content, hash: sha256(content), isJson: true });
+          outputs.push({ pack: server.pack, target: 'opencode', kind: 'mcp', id: server.id, source: server.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('opencode', 'mcp'), inventory: [{ version: 1, format: 'json', selector: jsonPathBracketSelector(['mcp', server.id]) }], content, hash: sha256(content), isJson: true });
         }
         for (const rule of config.rules) {
           const relPath = '.opencode/opencode.json';
