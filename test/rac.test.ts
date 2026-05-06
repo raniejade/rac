@@ -205,6 +205,31 @@ describe('parsers', () => {
     await writeFile(path.join(root, '.rac/rules/b.toml'), '[[rule]]\nid = "r1"\ndecision = "forbidden"\njustification = "x"\ncommand = ["gh"]\n', 'utf8');
     await expect(loadRules(path.join(root, '.rac'), 'project')).rejects.toThrow('duplicate rule id');
   });
+
+  it('normalizes definition ids to NFC, rejects unsafe ids, and detects duplicates after normalization', async () => {
+    const root = await makeTmp();
+    await mkdir(path.join(root, '.rac/agents'), { recursive: true });
+    await mkdir(path.join(root, '.rac/mcps'), { recursive: true });
+    await mkdir(path.join(root, '.rac/rules'), { recursive: true });
+
+    await writeFile(path.join(root, '.rac/agents/a.toml'), 'id = "agént"\ninstructions = "ok"\n', 'utf8');
+    await writeFile(path.join(root, '.rac/agents/b.toml'), 'id = "age\u0301nt"\ninstructions = "ok"\n', 'utf8');
+    await writeFile(path.join(root, '.rac/mcps/a.toml'), 'id = "srv"\ncommand = "node"\n', 'utf8');
+    await writeFile(path.join(root, '.rac/rules/a.toml'), '[[rule]]\nid = "rulé"\ndecision = "forbidden"\njustification = "x"\ncommand = ["git"]\n', 'utf8');
+
+    await expect(loadAgents(path.join(root, '.rac'), 'project')).rejects.toThrow('duplicate agent id');
+
+    await writeFile(path.join(root, '.rac/agents/b.toml'), 'id = "helper"\ninstructions = "ok"\n', 'utf8');
+    const agents = await loadAgents(path.join(root, '.rac'), 'project');
+    expect(agents[0].id).toBe('agént');
+
+    await writeFile(path.join(root, '.rac/agents/b.toml'), 'id = " bad "\ninstructions = "x"\n', 'utf8');
+    await expect(loadAgents(path.join(root, '.rac'), 'project')).rejects.toThrow('leading/trailing whitespace');
+    await writeFile(path.join(root, '.rac/agents/b.toml'), 'id = ".."\ninstructions = "x"\n', 'utf8');
+    await expect(loadAgents(path.join(root, '.rac'), 'project')).rejects.toThrow('invalid agent id');
+    await writeFile(path.join(root, '.rac/agents/b.toml'), 'id = "bad/name"\ninstructions = "x"\n', 'utf8');
+    await expect(loadAgents(path.join(root, '.rac'), 'project')).rejects.toThrow('path separators');
+  });
 });
 
 describe('runtime config + adapters', () => {
@@ -359,8 +384,8 @@ describe('install + doctor', () => {
     expect(Object.keys(claudeProject.mcpServers)).toEqual(['a-remote', 'project-rules', 'z-remote']);
 
     const codexToml = await readFile(path.join(root, '.codex/config.toml'), 'utf8');
-    expect(codexToml.indexOf('[mcp_servers.a-remote]')).toBeLessThan(codexToml.indexOf('[mcp_servers.project-rules]'));
-    expect(codexToml.indexOf('[mcp_servers.project-rules]')).toBeLessThan(codexToml.indexOf('[mcp_servers.z-remote]'));
+    expect(codexToml.indexOf('[mcp_servers."a-remote"]')).toBeLessThan(codexToml.indexOf('[mcp_servers."project-rules"]'));
+    expect(codexToml.indexOf('[mcp_servers."project-rules"]')).toBeLessThan(codexToml.indexOf('[mcp_servers."z-remote"]'));
     expect(codexToml).toContain('startup_timeout_sec = 2');
     expect(codexToml).not.toContain('startup_timeout = ');
 
@@ -545,9 +570,73 @@ describe('install + doctor', () => {
       records: Array<{ id: string; inventory: Array<{ selector: string }> }>;
     };
 
-    for (const record of claudeManifest.records) expect(record.inventory[0]?.selector).toBe(`$.mcpServers.${record.id}`);
-    for (const record of codexManifest.records) expect(record.inventory[0]?.selector).toBe(`mcp_servers.${record.id}`);
-    for (const record of opencodeManifest.records) expect(record.inventory[0]?.selector).toBe(`$.mcp.${record.id}`);
+    for (const record of claudeManifest.records) expect(record.inventory[0]?.selector).toBe(`$["mcpServers"][${JSON.stringify(record.id)}]`);
+    for (const record of codexManifest.records) expect(record.inventory[0]?.selector).toBe(`mcp_servers.${JSON.stringify(record.id)}`);
+    for (const record of opencodeManifest.records) expect(record.inventory[0]?.selector).toBe(`$["mcp"][${JSON.stringify(record.id)}]`);
+  });
+
+  it('uses escaped toml keys and bracket-safe jsonpath selectors for dynamic ids', async () => {
+    const root = await makeTmp();
+    await seed(root);
+    await writeFile(path.join(root, '.rac/mcps/special.toml'), 'id = "dot id \\"x\\".日本語"\ncommand = "node"\n', 'utf8');
+    await install({ cwd: root, targets: ['claude', 'codex', 'opencode'], kinds: ['mcp'] });
+
+    const codexToml = await readFile(path.join(root, '.codex/config.toml'), 'utf8');
+    expect(codexToml).toContain('[mcp_servers."dot id \\"x\\".日本語"]');
+
+    const claudeManifest = JSON.parse(await readFile(path.join(root, '.claude/.rac-install-manifest.json'), 'utf8')) as {
+      records: Array<{ id: string; inventory: Array<{ selector: string }> }>;
+    };
+    const codexManifest = JSON.parse(await readFile(path.join(root, '.codex/.rac-install-manifest.json'), 'utf8')) as {
+      records: Array<{ id: string; inventory: Array<{ selector: string }> }>;
+    };
+    const opencodeManifest = JSON.parse(await readFile(path.join(root, '.opencode/.rac-install-manifest.json'), 'utf8')) as {
+      records: Array<{ id: string; inventory: Array<{ selector: string }> }>;
+    };
+    const wanted = 'dot id "x".日本語';
+    expect(claudeManifest.records.find((r) => r.id === wanted)?.inventory[0]?.selector).toBe('$["mcpServers"]["dot id \\"x\\".日本語"]');
+    expect(codexManifest.records.find((r) => r.id === wanted)?.inventory[0]?.selector).toBe('mcp_servers."dot id \\"x\\".日本語"');
+    expect(opencodeManifest.records.find((r) => r.id === wanted)?.inventory[0]?.selector).toBe('$["mcp"]["dot id \\"x\\".日本語"]');
+  });
+
+  it('rejects invalid manifest schema and unsafe manifest record paths before deletes', async () => {
+    const invalidJsonRoot = await makeTmp();
+    await seed(invalidJsonRoot);
+    await install({ cwd: invalidJsonRoot, targets: ['codex'], kinds: ['agent'] });
+    await writeFile(path.join(invalidJsonRoot, '.codex/.rac-install-manifest.json'), '{invalid', 'utf8');
+    await expect(install({ cwd: invalidJsonRoot, targets: ['codex'], kinds: ['agent'] })).rejects.toThrow('invalid RAC install manifest');
+
+    const badVersionRoot = await makeTmp();
+    await seed(badVersionRoot);
+    await install({ cwd: badVersionRoot, targets: ['codex'], kinds: ['agent'] });
+    await writeFile(path.join(badVersionRoot, '.codex/.rac-install-manifest.json'), JSON.stringify({ version: 2, records: [] }), 'utf8');
+    await expect(install({ cwd: badVersionRoot, targets: ['codex'], kinds: ['agent'] })).rejects.toThrow('invalid RAC install manifest');
+
+    const unsafePathRoot = await makeTmp();
+    await seed(unsafePathRoot);
+    await install({ cwd: unsafePathRoot, targets: ['codex'], kinds: ['agent'] });
+    const outsideFile = path.join(path.dirname(unsafePathRoot), 'outside-should-stay.txt');
+    await writeFile(outsideFile, 'dont touch', 'utf8');
+    await writeFile(
+      path.join(unsafePathRoot, '.codex/.rac-install-manifest.json'),
+      JSON.stringify({
+        version: 1,
+        records: [{
+          version: 1,
+          pack: 'project',
+          target: 'codex',
+          kind: 'agent',
+          id: 'x',
+          source: 'agents/x.toml',
+          relPath: '../outside-should-stay.txt',
+          hash: 'abc',
+          inventory: [{ version: 1, format: 'file', selector: '$' }]
+        }]
+      }),
+      'utf8'
+    );
+    await expect(install({ cwd: unsafePathRoot, targets: ['codex'], kinds: ['agent'], clean: true })).rejects.toThrow('invalid RAC install manifest');
+    expect(await readFile(outsideFile, 'utf8')).toBe('dont touch');
   });
 
   it('dry-run writes no vendor manifests and no central manifest', async () => {
@@ -633,10 +722,11 @@ describe('install + doctor', () => {
     const manifestOne = JSON.parse(await readFile(manifestPath, 'utf8')) as {
       records: Array<{ relPath: string; hash: string; kind: string; inventory: Array<{ selector: string }> }>;
     };
-    const assetRecord = manifestOne.records.find((record) => record.relPath.endsWith(path.join('project-gates', 'checklist.md')));
+    const assetRecord = manifestOne.records.find((record) => record.relPath === '.agents/skills/project-gates/checklist.md');
     expect(assetRecord?.kind).toBe('skill');
     expect(assetRecord?.hash && assetRecord.hash.length > 0).toBe(true);
     expect(assetRecord?.inventory[0]?.selector).toBe('$');
+    expect(assetRecord?.relPath.includes('\\')).toBe(false);
 
     await expect(install({ cwd: root, targets: ['codex'], kinds: ['skill'] })).resolves.toBeTruthy();
     const manifestTwo = JSON.parse(await readFile(manifestPath, 'utf8')) as { records: unknown[] };

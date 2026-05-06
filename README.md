@@ -65,6 +65,9 @@ Definition rules:
 - Skill frontmatter must start at byte 0 with `+++` and end with `+++`.
 - MCPs: one file per server in `.rac/mcps/*.toml`.
 - Rules: one or more `[[rule]]` entries per file in `.rac/rules/*.toml`.
+- Definition IDs (`agent.id`, skill directory name, `mcp.id`, `rule.id`) normalize to Unicode NFC.
+- IDs are rejected when empty after trimming, with leading/trailing whitespace, `.`/`..`, `/` or `\`, or control characters.
+- Duplicate checks compare normalized IDs.
 - MCP transport must be exactly one of:
   - local: `command` (+ optional `args`)
   - remote: `type` + `url`
@@ -247,6 +250,12 @@ rac pack remove <id>
 
 Install manifests are used to track managed files and cleanup behavior.
 
+Manifest behavior:
+- Missing manifest file is treated as empty.
+- Invalid JSON, unsupported version, invalid records, or unsafe manifest record paths fail with `invalid RAC install manifest: <path>: <reason>`.
+- Generated output paths and manifest record paths must resolve inside the project root before overwrite checks, writes, check comparisons, manifest save/delete, and clean deletes.
+- Dynamic JSON selectors use bracket-safe JSONPath (`$["..."]["..."]`), and Codex MCP table keys use quoted TOML keys.
+
 ### Claude
 
 - Agents: `.claude/agents/<id>.md`
@@ -262,6 +271,7 @@ Install manifests are used to track managed files and cleanup behavior.
   - if `vendor.codex.emit = "instruction-only"`: `.codex/agents/<id>.md`
 - Skills: `.agents/skills/<id>/SKILL.md` + skill assets
 - MCP: `.codex/config.toml`
+- Codex MCP entries are emitted as quoted table keys (for example `[mcp_servers."id.with spaces"]`).
 - Install manifests:
   - agents + mcps: `.codex/.rac-install-manifest.json`
   - skills: `.agents/.rac-install-manifest.json`

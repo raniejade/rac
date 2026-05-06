@@ -32,6 +32,8 @@ Responsibilities:
 - Discover files with deterministic glob patterns
 - Parse and validate schema (`zod`)
 - Enforce structural constraints (duplicate IDs, MCP transport exclusivity, skill frontmatter boundaries)
+- Normalize all definition IDs (agent/skill/mcp/rule) to Unicode NFC
+- Reject unsafe IDs (leading/trailing whitespace, empty-after-trim, `.`, `..`, `/`, `\`, control chars)
 - Enforce duplicate `(kind,id)` rejection across active packs
 - Enforce rule constraints (`decision = "forbidden"` only, non-empty `justification`, non-empty `command`, non-empty alternatives, duplicate rule IDs across files)
 - Emit typed source definitions with source-path metadata
@@ -90,6 +92,8 @@ Responsibilities:
 - Define target-relative output paths
 - Render target-specific content formats
 - Apply vendor pass-through overlays verbatim
+- Escape dynamic TOML key segments for user IDs (quoted-key form)
+- Emit bracket-safe JSONPath selectors for dynamic user IDs
 - Preserve source metadata + deterministic content hash
 - Preserve originating pack IDs in each output record
 - Mark JSON outputs when overwrite policy should be stricter
@@ -126,6 +130,8 @@ Safety model:
 
 - Managed ownership is tracked in vendor-local manifests using `relPath` + inventory selectors
 - Manifest identity includes pack ID, so removed shared packs clean as stale outputs
+- Manifest loads are strict-schema validated (missing file only returns empty; invalid schema/JSON/version throws)
+- Adapter output paths, manifest paths, and manifest record `relPath`s must resolve inside project root before overwrite/write/check/save/delete/clean
 - Unmanaged files are protected from overwrite unless explicit conditions are met (`force`, manifest-owned, or managed markers for text outputs)
 - Deletions are constrained to stale manifest-owned outputs when `clean` is enabled
 
