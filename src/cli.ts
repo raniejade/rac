@@ -6,7 +6,7 @@ import type { Kind, Target } from './core/types.js';
 import { splitCsv } from './core/util.js';
 
 const TARGET_VALUES = ['claude', 'codex', 'opencode'] as const;
-const KIND_VALUES = ['agent', 'skill', 'mcp'] as const;
+const KIND_VALUES = ['agent', 'skill', 'mcp', 'rule'] as const;
 
 function normalizeTargets(value: string | undefined): Target[] {
   const targets = splitCsv<Target>(value, TARGET_VALUES);
@@ -37,7 +37,7 @@ program
   });
 
 program.command('init')
-  .description('Initialize .rac source tree with starter reviewer + project-gates + project-rules definitions')
+  .description('Initialize .rac source tree with starter reviewer + project-gates + project-rules + wrapper-deny rule definitions')
   .option('--empty', 'create folders only without starter examples')
   .action(async (opts: { empty?: boolean }) => {
     await initProject(process.cwd(), !!opts.empty);
@@ -46,7 +46,7 @@ program.command('init')
 program.command('install')
   .description('Install selected kinds/targets from .rac definitions')
   .option('--target <targets>', 'comma-separated: claude,codex,opencode')
-  .option('--kind <kinds>', 'comma-separated: agent,skill,mcp')
+  .option('--kind <kinds>', 'comma-separated: agent,skill,mcp,rule')
   .option('--dry-run', 'print planned changes only')
   .option('--clean', 'delete stale files tracked by manifest for selected kind/target')
   .option('--check', 'verify generated outputs/manifests are up to date without writing')
@@ -69,7 +69,7 @@ program.command('install')
 program.command('doctor')
   .description('Validate definitions and print warnings')
   .option('--target <targets>', 'comma-separated: claude,codex,opencode')
-  .option('--kind <kinds>', 'comma-separated: agent,skill,mcp')
+  .option('--kind <kinds>', 'comma-separated: agent,skill,mcp,rule')
   .action(async (opts: { target?: string; kind?: string }) => {
     const warnings = await doctor(process.cwd(), normalizeTargets(opts.target), normalizeKinds(opts.kind));
     if (warnings.length === 0) {

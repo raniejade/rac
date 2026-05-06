@@ -9,7 +9,7 @@ import { textManagedPayload } from './shared.js';
 export type AdapterOutput = {
   pack: Pack;
   target: Target;
-  kind: 'agent' | 'skill' | 'mcp';
+  kind: 'agent' | 'skill' | 'mcp' | 'rule';
   id: string;
   source: string;
   relPath: string;
@@ -100,6 +100,28 @@ function claudeAdapter(): TargetAdapter {
         }
       }
 
+      if (config.rules.length > 0) {
+        const relPath = '.claude/settings.json';
+        const deny: string[] = [];
+        for (const rule of [...config.rules].sort((a, b) => a.id.localeCompare(b.id))) {
+          for (const tool of rule.tools) {
+            const segments = tool.pattern.map((segment) => Array.isArray(segment) ? segment : [segment]);
+            const expanded = segments.reduce<string[][]>((acc, options) => {
+              const next: string[][] = [];
+              for (const base of acc) for (const option of options) next.push([...base, option]);
+              return next;
+            }, [[]]);
+            for (const command of expanded) {
+              deny.push(`Bash(${command.join(' ')}${tool.appendWildcard ? ' *' : ''})`);
+            }
+          }
+        }
+        const content = `${JSON.stringify({ permissions: { deny } }, null, 2)}\n`;
+        for (const rule of config.rules) {
+          outputs.push({ pack: 'project', target: 'claude', kind: 'rule', id: rule.id, source: rule.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('claude', 'rule'), inventory: [{ version: 1, format: 'json', selector: '$.permissions.deny' }], content, hash: sha256(content), isJson: true });
+        }
+      }
+
       return outputs;
     }
   };
@@ -165,6 +187,28 @@ function codexAdapter(): TargetAdapter {
         }
       }
 
+      if (config.rules.length > 0) {
+        const bySource = new Map<string, typeof config.rules>();
+        for (const rule of config.rules) {
+          const existing = bySource.get(rule.source.relPath) ?? [];
+          existing.push(rule);
+          bySource.set(rule.source.relPath, existing);
+        }
+        for (const [source, sourceRules] of [...bySource.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+          const lines = [RAC_MARKER];
+          for (const rule of [...sourceRules].sort((a, b) => a.id.localeCompare(b.id))) {
+            const tool = rule.tools[0];
+            lines.push(`prefix_rule(${JSON.stringify(tool.pattern)}, ${JSON.stringify(tool.decision)}, ${JSON.stringify(tool.justification)}, ${tool.appendWildcard ? 'true' : 'false'})`);
+          }
+          const content = `${lines.join('\n')}\n`;
+          const sourceBase = path.basename(source, path.extname(source));
+          const relPath = `.codex/rules/${sourceBase}.rules`;
+          for (const rule of sourceRules) {
+            outputs.push({ pack: 'project', target: 'codex', kind: 'rule', id: rule.id, source: rule.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('codex', 'rule'), inventory: [{ version: 1, format: 'file', selector: '$' }], content, hash: sha256(content), isJson: false });
+          }
+        }
+      }
+
       return outputs;
     }
   };
@@ -197,7 +241,8 @@ function opencodeAdapter(): TargetAdapter {
         }
       }
 
-      if (config.mcps.length > 0) {
+      const hasOpenCodeConfig = config.mcps.length > 0 || config.rules.length > 0;
+      if (hasOpenCodeConfig) {
         const mcp = Object.fromEntries([...config.mcps].sort((a, b) => a.id.localeCompare(b.id)).map((server) => [
           server.id,
           mergeGeneratedWithVendor(server.transport.kind === 'local'
@@ -205,10 +250,33 @@ function opencodeAdapter(): TargetAdapter {
             : { type: 'remote', enabled: true, url: server.transport.url }, server.vendorConfig?.opencode, `mcp ${server.id} vendor.opencode.config`
           )
         ]));
-        const content = `${JSON.stringify({ mcp }, null, 2)}\n`;
+        const bashDenyCommands = new Set<string>();
+        for (const rule of [...config.rules].sort((a, b) => a.id.localeCompare(b.id))) {
+          for (const tool of rule.tools) {
+            const segments = tool.pattern.map((segment) => Array.isArray(segment) ? segment : [segment]);
+            const expanded = segments.reduce<string[][]>((acc, options) => {
+              const next: string[][] = [];
+              for (const base of acc) for (const option of options) next.push([...base, option]);
+              return next;
+            }, [[]]);
+            for (const command of expanded) {
+              bashDenyCommands.add(`${command.join(' ')}${tool.appendWildcard ? ' *' : ''}`);
+            }
+          }
+        }
+        const bash = Object.fromEntries(
+          [...bashDenyCommands]
+            .sort((a, b) => a.localeCompare(b))
+            .map((command) => [command, 'deny'])
+        );
+        const content = `${JSON.stringify({ ...(config.mcps.length > 0 ? { mcp } : {}), ...(config.rules.length > 0 ? { permission: { bash } } : {}) }, null, 2)}\n`;
         for (const server of config.mcps) {
           const relPath = '.opencode/opencode.json';
           outputs.push({ pack: 'project', target: 'opencode', kind: 'mcp', id: server.id, source: server.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('opencode', 'mcp'), inventory: [{ version: 1, format: 'json', selector: `$.mcp.${server.id}` }], content, hash: sha256(content), isJson: true });
+        }
+        for (const rule of config.rules) {
+          const relPath = '.opencode/opencode.json';
+          outputs.push({ pack: 'project', target: 'opencode', kind: 'rule', id: rule.id, source: rule.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('opencode', 'rule'), inventory: [{ version: 1, format: 'json', selector: '$.permission.bash' }], content, hash: sha256(content), isJson: true });
         }
       }
 

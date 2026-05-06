@@ -69,6 +69,7 @@ async function main() {
     await expectExists(path.join(sampleRepo, '.rac', 'agents', 'reviewer.toml'));
     await expectExists(path.join(sampleRepo, '.rac', 'skills', 'project-gates', 'SKILL.md'));
     await expectExists(path.join(sampleRepo, '.rac', 'mcps', 'project-rules.toml'));
+    await expectExists(path.join(sampleRepo, '.rac', 'rules', 'wrapper-deny.toml'));
     await expectExists(path.join(sampleRepo, '.codex', '.rac-install-manifest.json'));
     await expectExists(path.join(sampleRepo, '.agents', '.rac-install-manifest.json'));
     await expectExists(path.join(sampleRepo, '.claude', '.rac-install-manifest.json'));
@@ -77,6 +78,8 @@ async function main() {
     await expectExists(path.join(sampleRepo, '.codex', 'agents', 'reviewer.toml'));
     await expectExists(path.join(sampleRepo, '.agents', 'skills', 'project-gates', 'SKILL.md'));
     await expectExists(path.join(sampleRepo, '.codex', 'config.toml'));
+    await expectExists(path.join(sampleRepo, '.codex', 'rules', 'wrapper-deny.rules'));
+    await expectExists(path.join(sampleRepo, '.claude', 'settings.json'));
 
     await expectExists(path.join(sampleRepo, '.mcp.json'));
     await expectExists(path.join(sampleRepo, '.opencode', 'opencode.json'));
@@ -88,6 +91,12 @@ async function main() {
     }
     if (!Array.isArray(projectRules.command) || projectRules.command[0] !== 'node') {
       throw new Error('OpenCode MCP entry for project-rules has unexpected command shape');
+    }
+    if (!opencode?.permission?.bash || typeof opencode.permission.bash !== 'object' || Array.isArray(opencode.permission.bash)) {
+      throw new Error('OpenCode permission.bash missing centralized rule map entries');
+    }
+    if (opencode.permission.bash['git push *'] !== 'deny') {
+      throw new Error('OpenCode permission.bash rule map missing deny value for git push *');
     }
 
     const codexAgentToml = await readFile(path.join(sampleRepo, '.codex', 'agents', 'reviewer.toml'), 'utf8');

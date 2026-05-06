@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { AgentDef, McpDef, Pack, SkillDef } from './types.js';
+import type { AgentDef, McpDef, Pack, RuleDef, SkillDef } from './types.js';
 import { assertNoTraversal, rel } from './util.js';
 
 export type ConfigWarning = {
@@ -76,7 +76,22 @@ export type RuntimeConfig = {
   agents: AgentConfig[];
   skills: SkillConfig[];
   mcps: McpConfig[];
+  rules: RuleConfig[];
   warnings: ConfigWarning[];
+};
+
+export type ToolRuleConfig = {
+  decision: 'forbidden';
+  justification: string;
+  pattern: Array<string | string[]>;
+  appendWildcard: boolean;
+};
+
+export type RuleConfig = {
+  pack: Pack;
+  id: string;
+  source: SourceInfo;
+  tools: ToolRuleConfig[];
 };
 
 export type BuildRuntimeConfigInput = {
@@ -84,6 +99,7 @@ export type BuildRuntimeConfigInput = {
   agents: AgentDef[];
   skills: SkillDef[];
   mcps: McpDef[];
+  rules: RuleDef[];
 };
 
 function sourceInfo(root: string, absPath: string): SourceInfo {
@@ -232,5 +248,17 @@ export async function buildRuntimeConfig(input: BuildRuntimeConfigInput): Promis
       : { kind: 'remote', type: String(mcp.type), url: String(mcp.url) }
   }));
 
-  return { pack: 'project', agents, skills, mcps, warnings };
+  const rules: RuleConfig[] = input.rules.map((rule) => ({
+    pack: rule.pack,
+    id: rule.id,
+    source: sourceInfo(input.root, rule.sourcePath),
+    tools: [{
+      decision: rule.decision,
+      justification: rule.justification,
+      pattern: rule.command,
+      appendWildcard: rule.append_wildcard
+    }]
+  }));
+
+  return { pack: 'project', agents, skills, mcps, rules, warnings };
 }

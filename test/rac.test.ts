@@ -8,7 +8,7 @@ import { describe, expect, it, afterEach } from 'vitest';
 import { adapterFor, TARGET_ADAPTERS } from '../src/adapters/target-adapters.js';
 import { buildRuntimeConfig } from '../src/core/config-model.js';
 import { doctor, initProject, install } from '../src/core/install.js';
-import { loadAgents, loadMcps, loadSkills } from '../src/core/parsers.js';
+import { loadAgents, loadMcps, loadRules, loadSkills } from '../src/core/parsers.js';
 
 const tempDirs: string[] = [];
 
@@ -28,6 +28,7 @@ async function seed(root: string): Promise<void> {
   await mkdir(path.join(root, '.rac/agents'), { recursive: true });
   await mkdir(path.join(root, '.rac/skills/project-gates'), { recursive: true });
   await mkdir(path.join(root, '.rac/mcps'), { recursive: true });
+  await mkdir(path.join(root, '.rac/rules'), { recursive: true });
 
   await writeFile(path.join(root, '.rac/agents/reviewer.toml'), 'id = "reviewer"\ninstructions = "./reviewer.md"\n[vendor.codex]\nemit = "instruction-only"\n[vendor.opencode]\ntools = ["legacy"]\n', 'utf8');
   await writeFile(path.join(root, '.rac/agents/reviewer.md'), 'Review this project.\n', 'utf8');
@@ -36,6 +37,8 @@ async function seed(root: string): Promise<void> {
   await writeFile(path.join(root, '.rac/skills/project-gates/checklist.md'), '- test\n', 'utf8');
 
   await writeFile(path.join(root, '.rac/mcps/project-rules.toml'), 'id = "project-rules"\ncommand = "node"\nargs = ["./mcp.js", "${PROJECT_RULES_TOKEN}"]\nstartup_timeout_ms = 1200\n', 'utf8');
+
+  await writeFile(path.join(root, '.rac/rules/wrappers.toml'), '[[rule]]\nid = "deny-gh-pr-merge"\ndecision = "forbidden"\njustification = "Use wrapper"\ncommand = ["gh", ["pr", "issue"], "merge"]\n\n[[rule]]\nid = "deny-git-push"\ndecision = "forbidden"\njustification = "Use wrapper"\ncommand = ["git", "push"]\nappend_wildcard = false\n', 'utf8');
 }
 
 describe('parsers', () => {
@@ -73,6 +76,29 @@ describe('parsers', () => {
     const parsed = await loadMcps(path.join(root, '.rac'));
     expect(parsed[0].envVars).toEqual(['X', 'Y']);
   });
+
+  it('rule parser enforces [[rule]] entries, unique ids, and command validation', async () => {
+    const root = await makeTmp();
+    await mkdir(path.join(root, '.rac/rules'), { recursive: true });
+    await writeFile(path.join(root, '.rac/rules/a.toml'), 'id = "x"\n', 'utf8');
+    await expect(loadRules(path.join(root, '.rac'))).rejects.toThrow('missing [[rule]] entries');
+
+    await writeFile(path.join(root, '.rac/rules/a.toml'), '[[rule]]\nid = "r1"\ndecision = "allow"\njustification = "x"\ncommand = ["git"]\n', 'utf8');
+    await expect(loadRules(path.join(root, '.rac'))).rejects.toThrow('unsupported rule decision');
+
+    await writeFile(path.join(root, '.rac/rules/a.toml'), '[[rule]]\nid = "r1"\ndecision = "forbidden"\njustification = ""\ncommand = ["git"]\n', 'utf8');
+    await expect(loadRules(path.join(root, '.rac'))).rejects.toThrow();
+
+    await writeFile(path.join(root, '.rac/rules/a.toml'), '[[rule]]\nid = "r1"\ndecision = "forbidden"\njustification = "x"\ncommand = []\n', 'utf8');
+    await expect(loadRules(path.join(root, '.rac'))).rejects.toThrow('empty command list');
+
+    await writeFile(path.join(root, '.rac/rules/a.toml'), '[[rule]]\nid = "r1"\ndecision = "forbidden"\njustification = "x"\ncommand = [["git"], []]\n', 'utf8');
+    await expect(loadRules(path.join(root, '.rac'))).rejects.toThrow('empty command alternative array');
+
+    await writeFile(path.join(root, '.rac/rules/a.toml'), '[[rule]]\nid = "r1"\ndecision = "forbidden"\njustification = "x"\ncommand = ["git"]\n', 'utf8');
+    await writeFile(path.join(root, '.rac/rules/b.toml'), '[[rule]]\nid = "r1"\ndecision = "forbidden"\njustification = "x"\ncommand = ["gh"]\n', 'utf8');
+    await expect(loadRules(path.join(root, '.rac'))).rejects.toThrow('duplicate rule id');
+  });
 });
 
 describe('runtime config + adapters', () => {
@@ -84,7 +110,8 @@ describe('runtime config + adapters', () => {
       root: sourceRoot,
       agents: await loadAgents(sourceRoot),
       skills: await loadSkills(sourceRoot),
-      mcps: await loadMcps(sourceRoot)
+      mcps: await loadMcps(sourceRoot),
+      rules: await loadRules(sourceRoot)
     });
 
     expect(config.agents[0].instructions).toContain('Review this project.');
@@ -100,7 +127,8 @@ describe('runtime config + adapters', () => {
       root: sourceRoot,
       agents: await loadAgents(sourceRoot),
       skills: await loadSkills(sourceRoot),
-      mcps: await loadMcps(sourceRoot)
+      mcps: await loadMcps(sourceRoot),
+      rules: await loadRules(sourceRoot)
     });
 
     const claude = adapterFor('claude').plan(config);
@@ -120,7 +148,8 @@ describe('runtime config + adapters', () => {
       root: sourceRoot,
       agents: await loadAgents(sourceRoot),
       skills: await loadSkills(sourceRoot),
-      mcps: await loadMcps(sourceRoot)
+      mcps: await loadMcps(sourceRoot),
+      rules: await loadRules(sourceRoot)
     });
 
     const claudeSkill = adapterFor('claude')
@@ -230,6 +259,54 @@ describe('install + doctor', () => {
 
     const opencode = JSON.parse(await readFile(path.join(root, '.opencode/opencode.json'), 'utf8')) as { mcp: Record<string, { type: string; enabled: boolean; command?: string[]; url?: string }> };
     expect(Object.keys(opencode.mcp)).toEqual(['a-remote', 'project-rules', 'z-remote']);
+  });
+
+  it('installs centralized rules for codex/claude/opencode and combines opencode mcp+rule payload', async () => {
+    const root = await makeTmp();
+    await seed(root);
+
+    await install({ cwd: root, targets: ['claude', 'codex', 'opencode'], kinds: ['mcp', 'rule'] });
+
+    const codexRules = await readFile(path.join(root, '.codex/rules/wrappers.rules'), 'utf8');
+    expect(codexRules).toContain('prefix_rule([');
+    expect(codexRules).toContain('["gh",["pr","issue"],"merge"]');
+
+    const claudeSettings = JSON.parse(await readFile(path.join(root, '.claude/settings.json'), 'utf8')) as { permissions: { deny: string[] } };
+    expect(claudeSettings.permissions.deny).toContain('Bash(gh pr merge *)');
+    expect(claudeSettings.permissions.deny).toContain('Bash(gh issue merge *)');
+    expect(claudeSettings.permissions.deny).toContain('Bash(git push)');
+
+    const opencode = JSON.parse(await readFile(path.join(root, '.opencode/opencode.json'), 'utf8')) as { mcp: Record<string, unknown>; permission: { bash: Record<string, string> } };
+    expect(opencode.mcp).toBeTruthy();
+    expect(opencode.permission.bash['gh pr merge *']).toBe('deny');
+    expect(opencode.permission.bash['gh issue merge *']).toBe('deny');
+    expect(opencode.permission.bash['git push']).toBe('deny');
+  });
+
+  it('preserves OpenCode shared mcp/rule sibling content across separate install/check/clean operations', async () => {
+    const root = await makeTmp();
+    await seed(root);
+
+    await install({ cwd: root, targets: ['opencode'], kinds: ['mcp'] });
+    await install({ cwd: root, targets: ['opencode'], kinds: ['rule'] });
+
+    const combined = JSON.parse(await readFile(path.join(root, '.opencode/opencode.json'), 'utf8')) as {
+      mcp?: Record<string, unknown>;
+      permission?: { bash?: Record<string, string> };
+    };
+    expect(combined.mcp).toBeTruthy();
+    expect(combined.permission?.bash?.['git push']).toBe('deny');
+
+    await expect(install({ cwd: root, targets: ['opencode'], kinds: ['mcp'], check: true })).resolves.toBeTruthy();
+
+    await rm(path.join(root, '.rac/rules/wrappers.toml'));
+    await install({ cwd: root, targets: ['opencode'], kinds: ['rule'], clean: true });
+    const cleaned = JSON.parse(await readFile(path.join(root, '.opencode/opencode.json'), 'utf8')) as {
+      mcp?: Record<string, unknown>;
+      permission?: unknown;
+    };
+    expect(cleaned.mcp).toBeTruthy();
+    expect(cleaned.permission).toBeUndefined();
   });
 
   it('vendor compatibility schema: OpenCode MCP emits local/remote typed entries and rejects legacy command object shape', async () => {

@@ -1,6 +1,6 @@
 # rac
 
-Centralize agent/skill/MCP definitions in `.rac` as the source of truth, then generate and sync Claude, Codex, and OpenCode config surfaces.
+Centralize agent/skill/MCP/rule definitions in `.rac` as the source of truth, then generate and sync Claude, Codex, and OpenCode config surfaces.
 
 ## Purpose
 
@@ -46,6 +46,8 @@ npx github:raniejade/rac install
       ...asset files...
   mcps/
     <id>.toml
+  rules/
+    <file>.toml
 ```
 
 Definition rules:
@@ -54,6 +56,7 @@ Definition rules:
 - Skills: each skill must be in `.rac/skills/<id>/SKILL.md`.
 - Skill frontmatter must start at byte 0 with `+++` and end with `+++`.
 - MCPs: one file per server in `.rac/mcps/*.toml`.
+- Rules: one or more `[[rule]]` entries per file in `.rac/rules/*.toml`.
 - MCP transport must be exactly one of:
   - local: `command` (+ optional `args`)
   - remote: `type` + `url`
@@ -157,7 +160,7 @@ rac init [--empty]
 Validate definitions and print warnings.
 
 ```bash
-rac doctor [--target claude,codex,opencode] [--kind agent,skill,mcp]
+rac doctor [--target claude,codex,opencode] [--kind agent,skill,mcp,rule]
 ```
 
 - Prints `ok` when no warnings are found.
@@ -170,7 +173,7 @@ rac doctor [--target claude,codex,opencode] [--kind agent,skill,mcp]
 Generate and install selected definitions.
 
 ```bash
-rac install [--target claude,codex,opencode] [--kind agent,skill,mcp] [--dry-run] [--clean] [--check] [--force]
+rac install [--target claude,codex,opencode] [--kind agent,skill,mcp,rule] [--dry-run] [--clean] [--check] [--force]
 ```
 
 - `--dry-run`: previews planned create/update paths and performs no writes.
@@ -214,7 +217,7 @@ Install manifests are used to track managed files and cleanup behavior.
 
 - Agents: `.opencode/agents/<id>.md`
 - Skills: `.opencode/skills/<id>/SKILL.md` + skill assets
-- MCP: `.opencode/opencode.json`
+- MCP + rules config: `.opencode/opencode.json` (rules render as `permission.bash` command-pattern keys mapped to `"deny"`)
 - Install manifest: `.opencode/.rac-install-manifest.json`
 
 ## Safe Install Workflow
@@ -247,12 +250,12 @@ Guidelines:
 - `invalid target/kind`
   - Use supported values only:
     - target: `claude`, `codex`, `opencode`
-    - kind: `agent`, `skill`, `mcp`
+    - kind: `agent`, `skill`, `mcp`, `rule`
 
 - `refusing to overwrite existing init examples`
   - `init` found starter files already present. Remove/rename them or run with `--empty` if you only need folders.
 
-- `duplicate agent id`, `duplicate skill id`, `duplicate mcp id`
+- `duplicate agent id`, `duplicate skill id`, `duplicate mcp id`, `duplicate rule id`
   - Ensure each ID is unique in `.rac` sources.
 
 - `skill frontmatter must start with +++ at byte 0` or `missing closing +++ delimiter`

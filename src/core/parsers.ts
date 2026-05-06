@@ -5,7 +5,7 @@ import fg from 'fast-glob';
 import { parse } from 'smol-toml';
 import { z } from 'zod';
 
-import type { AgentDef, McpDef, SkillDef } from './types.js';
+import type { AgentDef, McpDef, RuleCommandItem, RuleDef, SkillDef } from './types.js';
 import { collectEnvVarsFromText } from './util.js';
 
 const agentSchema = z.object({
@@ -41,6 +41,14 @@ const mcpSchema = z.object({
   if (hasLocal && hasRemote) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'mcp cannot define both local and remote transport' });
   }
+});
+
+const ruleSchema = z.object({
+  id: z.string().min(1),
+  decision: z.string(),
+  justification: z.string(),
+  command: z.array(z.union([z.string(), z.array(z.string())])),
+  append_wildcard: z.boolean().optional()
 });
 
 function parseTomlOrThrow(file: string, raw: string): Record<string, unknown> {
@@ -123,6 +131,55 @@ export async function loadMcps(root: string): Promise<McpDef[]> {
       sourcePath: file,
       sourceName: path.relative(root, file)
     });
+  }
+  return out;
+}
+
+export async function loadRules(root: string): Promise<RuleDef[]> {
+  const files = await fg('rules/*.toml', { cwd: root, absolute: true });
+  const ids = new Set<string>();
+  const out: RuleDef[] = [];
+  for (const file of files) {
+    const parsedFile = parseTomlOrThrow(file, await readFile(file, 'utf8'));
+    const rawRules = parsedFile.rule;
+    if (!Array.isArray(rawRules) || rawRules.length === 0) {
+      throw new Error(`missing [[rule]] entries: ${file}`);
+    }
+    for (const rawRule of rawRules) {
+      const parsed = ruleSchema.parse(rawRule);
+      if (parsed.decision !== 'forbidden') {
+        throw new Error(`unsupported rule decision for ${parsed.id}: ${parsed.decision}`);
+      }
+      if (!parsed.justification.trim()) {
+        throw new Error(`missing justification for rule ${parsed.id}`);
+      }
+      if (parsed.command.length === 0) {
+        throw new Error(`empty command list for rule ${parsed.id}`);
+      }
+      const normalized: RuleCommandItem[] = parsed.command.map((item) => {
+        if (typeof item === 'string') {
+          if (!item.trim()) throw new Error(`empty command segment for rule ${parsed.id}`);
+          return item;
+        }
+        if (item.length === 0) throw new Error(`empty command alternative array for rule ${parsed.id}`);
+        for (const entry of item) {
+          if (!entry.trim()) throw new Error(`empty command alternative for rule ${parsed.id}`);
+        }
+        return item;
+      });
+      if (ids.has(parsed.id)) throw new Error(`duplicate rule id: ${parsed.id}`);
+      ids.add(parsed.id);
+      out.push({
+        pack: 'project',
+        id: parsed.id,
+        decision: 'forbidden',
+        justification: parsed.justification,
+        command: normalized,
+        append_wildcard: parsed.append_wildcard ?? true,
+        sourcePath: file,
+        sourceName: path.relative(root, file)
+      });
+    }
   }
   return out;
 }

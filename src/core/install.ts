@@ -5,7 +5,7 @@ import { adapterFor, vendorManifestRelPath } from '../adapters/target-adapters.j
 
 import { buildRuntimeConfig } from './config-model.js';
 import { deleteManifest, loadManifest, saveManifest } from './manifest.js';
-import { loadAgents, loadMcps, loadSkills } from './parsers.js';
+import { loadAgents, loadMcps, loadRules, loadSkills } from './parsers.js';
 import type { InstallManifest, InstallOptions, InstallResult, Kind, ManifestRecord, Target } from './types.js';
 import { RAC_MARKER, FM_SENSITIVE_MARKER, sha256 } from './util.js';
 
@@ -58,9 +58,26 @@ function selectedManifestRelPaths(targets: Target[], kinds: Kind[]): Set<string>
   return selected;
 }
 
+const ALL_KINDS: Kind[] = ['agent', 'skill', 'mcp', 'rule'];
+
+function isManagedOpenCodeSharedJson(record: Pick<ManifestRecord, 'target' | 'kind' | 'relPath'>): boolean {
+  return record.target === 'opencode' && (record.kind === 'mcp' || record.kind === 'rule') && record.relPath === '.opencode/opencode.json';
+}
+
+function stableOpenCodeConfigJson(config: Record<string, unknown>): string {
+  const ordered: Record<string, unknown> = {};
+  if (Object.prototype.hasOwnProperty.call(config, 'mcp')) ordered.mcp = config.mcp;
+  if (Object.prototype.hasOwnProperty.call(config, 'permission')) ordered.permission = config.permission;
+  for (const [key, value] of Object.entries(config).sort(([a], [b]) => a.localeCompare(b))) {
+    if (key === 'mcp' || key === 'permission') continue;
+    ordered[key] = value;
+  }
+  return `${JSON.stringify(ordered, null, 2)}\n`;
+}
+
 export async function initProject(cwd: string, empty = false): Promise<void> {
   const root = path.join(cwd, '.rac');
-  for (const dirName of ['agents', 'skills', 'mcps']) {
+  for (const dirName of ['agents', 'skills', 'mcps', 'rules']) {
     await mkdir(path.join(root, dirName), { recursive: true });
   }
   if (empty) return;
@@ -69,8 +86,9 @@ export async function initProject(cwd: string, empty = false): Promise<void> {
   const reviewerInstructions = path.join(root, 'agents', 'reviewer.instructions.md');
   const projectGatesSkill = path.join(root, 'skills', 'project-gates', 'SKILL.md');
   const projectRulesMcp = path.join(root, 'mcps', 'project-rules.toml');
+  const wrapperDenyRule = path.join(root, 'rules', 'wrapper-deny.toml');
 
-  if (await exists(reviewerToml) || await exists(reviewerInstructions) || await exists(projectGatesSkill) || await exists(projectRulesMcp)) {
+  if (await exists(reviewerToml) || await exists(reviewerInstructions) || await exists(projectGatesSkill) || await exists(projectRulesMcp) || await exists(wrapperDenyRule)) {
     throw new Error('refusing to overwrite existing init examples');
   }
 
@@ -126,6 +144,25 @@ export async function initProject(cwd: string, empty = false): Promise<void> {
     ].join('\n'),
     'utf8'
   );
+
+  await writeFile(
+    wrapperDenyRule,
+    [
+      '[[rule]]',
+      'id = "deny-git-push"',
+      'decision = "forbidden"',
+      'justification = "Use approved wrappers for push operations."',
+      'command = ["git", "push"]',
+      '',
+      '[[rule]]',
+      'id = "deny-gh-pr-merge"',
+      'decision = "forbidden"',
+      'justification = "Use approved wrappers for PR merges."',
+      'command = ["gh", "pr", "merge"]',
+      ''
+    ].join('\n'),
+    'utf8'
+  );
 }
 
 export async function install(options: InstallOptions): Promise<InstallResult> {
@@ -133,7 +170,7 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
   const targetRoot = options.cwd;
 
   const manifestsByRelPath = new Map<string, InstallManifest>();
-  for (const relPath of selectedManifestRelPaths(options.targets, options.kinds)) {
+  for (const relPath of selectedManifestRelPaths(options.targets, ALL_KINDS)) {
     manifestsByRelPath.set(relPath, await loadManifest(path.join(targetRoot, relPath)));
   }
 
@@ -145,7 +182,8 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
   const parsedAgents = options.kinds.includes('agent') ? await loadAgents(root) : [];
   const parsedSkills = options.kinds.includes('skill') ? await loadSkills(root) : [];
   const parsedMcps = options.kinds.includes('mcp') ? await loadMcps(root) : [];
-  const config = await buildRuntimeConfig({ root, agents: parsedAgents, skills: parsedSkills, mcps: parsedMcps });
+  const parsedRules = options.kinds.includes('rule') ? await loadRules(root) : [];
+  const config = await buildRuntimeConfig({ root, agents: parsedAgents, skills: parsedSkills, mcps: parsedMcps, rules: parsedRules });
 
   const plan: PlannedWrite[] = [];
   for (const target of options.targets) {
@@ -168,6 +206,51 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
         sourceFile: output.sourceFile,
         isJson: output.isJson
       });
+    }
+  }
+
+  const recordsByRelPath = new Map<string, ManifestRecord[]>();
+  for (const manifest of manifestsByRelPath.values()) {
+    for (const record of manifest.records) {
+      const existing = recordsByRelPath.get(record.relPath) ?? [];
+      existing.push(record);
+      recordsByRelPath.set(record.relPath, existing);
+    }
+  }
+  const planByRelPath = new Map<string, PlannedWrite[]>();
+  for (const write of plan) {
+    const existing = planByRelPath.get(write.relPath) ?? [];
+    existing.push(write);
+    planByRelPath.set(write.relPath, existing);
+  }
+
+  const opencodeSharedWrites = planByRelPath.get('.opencode/opencode.json') ?? [];
+  let openCodeSharedManagedHashOverride: string | undefined;
+  if (opencodeSharedWrites.length > 0) {
+    const siblingKinds = new Set<Kind>();
+    for (const record of recordsByRelPath.get('.opencode/opencode.json') ?? []) {
+      if (!isManagedOpenCodeSharedJson(record)) continue;
+      if (options.targets.includes(record.target) && !options.kinds.includes(record.kind)) siblingKinds.add(record.kind);
+    }
+    if (siblingKinds.size > 0 && (await exists(path.join(targetRoot, '.opencode/opencode.json')))) {
+      const existingRaw = await readFile(path.join(targetRoot, '.opencode/opencode.json'), 'utf8');
+      const existingParsed = JSON.parse(existingRaw) as Record<string, unknown>;
+      const generatedParsed = JSON.parse(opencodeSharedWrites[0].content ?? '{}') as Record<string, unknown>;
+      if (siblingKinds.has('mcp') && !Object.prototype.hasOwnProperty.call(generatedParsed, 'mcp') && Object.prototype.hasOwnProperty.call(existingParsed, 'mcp')) {
+        generatedParsed.mcp = existingParsed.mcp;
+      }
+      if (siblingKinds.has('rule') && !Object.prototype.hasOwnProperty.call(generatedParsed, 'permission') && Object.prototype.hasOwnProperty.call(existingParsed, 'permission')) {
+        generatedParsed.permission = existingParsed.permission;
+      }
+      const mergedContent = stableOpenCodeConfigJson(generatedParsed);
+      const mergedHash = sha256(mergedContent);
+      openCodeSharedManagedHashOverride = mergedHash;
+      for (const write of opencodeSharedWrites) {
+        write.content = mergedContent;
+        write.hash = mergedHash;
+      }
+    } else {
+      openCodeSharedManagedHashOverride = opencodeSharedWrites[0].hash;
     }
   }
 
@@ -230,6 +313,37 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
   }
   for (const write of plan) keptRelPaths.add(write.relPath);
 
+  let cleanRewriteOpenCodeShared: { absPath: string; content: string; hash: string } | undefined;
+  if (options.clean && options.targets.includes('opencode') && (options.kinds.includes('mcp') || options.kinds.includes('rule'))) {
+    const sharedRelPath = '.opencode/opencode.json';
+    const absPath = path.join(targetRoot, sharedRelPath);
+    const sharedManifestRecords = (recordsByRelPath.get(sharedRelPath) ?? []).filter(isManagedOpenCodeSharedJson);
+    const hasUnselectedSibling = sharedManifestRecords.some((record) => !selected(record));
+    if (hasUnselectedSibling && (await exists(absPath))) {
+      const existingRaw = await readFile(absPath, 'utf8');
+      const existingParsed = JSON.parse(existingRaw) as Record<string, unknown>;
+      const generatedWrites = planByRelPath.get(sharedRelPath) ?? [];
+      const generatedParsed = generatedWrites.length > 0
+        ? (JSON.parse(generatedWrites[0].content ?? '{}') as Record<string, unknown>)
+        : {};
+
+      if (!Object.prototype.hasOwnProperty.call(generatedParsed, 'mcp') && sharedManifestRecords.some((record) => !selected(record) && record.kind === 'mcp') && Object.prototype.hasOwnProperty.call(existingParsed, 'mcp')) {
+        generatedParsed.mcp = existingParsed.mcp;
+      }
+      if (!Object.prototype.hasOwnProperty.call(generatedParsed, 'permission') && sharedManifestRecords.some((record) => !selected(record) && record.kind === 'rule') && Object.prototype.hasOwnProperty.call(existingParsed, 'permission')) {
+        generatedParsed.permission = existingParsed.permission;
+      }
+
+      if (options.kinds.includes('mcp') && !generatedWrites.some((write) => write.kind === 'mcp')) delete generatedParsed.mcp;
+      if (options.kinds.includes('rule') && !generatedWrites.some((write) => write.kind === 'rule')) delete generatedParsed.permission;
+
+      const content = stableOpenCodeConfigJson(generatedParsed);
+      const hash = sha256(content);
+      openCodeSharedManagedHashOverride = hash;
+      cleanRewriteOpenCodeShared = { absPath, content, hash };
+    }
+  }
+
   const del: string[] = [];
   const seenDeletePath = new Set<string>();
   if (options.clean) {
@@ -248,11 +362,15 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
   }
 
   const nextManifestsByRelPath = new Map<string, InstallManifest>();
+  const applySharedHashOverride = (record: ManifestRecord): ManifestRecord => {
+    if (openCodeSharedManagedHashOverride && isManagedOpenCodeSharedJson(record)) return { ...record, hash: openCodeSharedManagedHashOverride };
+    return record;
+  };
   for (const [manifestRelPath, manifest] of manifestsByRelPath) {
-    const keep = manifest.records.filter((record) => !selected(record));
+    const keep = manifest.records.filter((record) => !selected(record)).map(applySharedHashOverride);
     const current = plan
       .filter((record) => record.manifestRelPath === manifestRelPath)
-      .map(({ version, pack, target, kind, id, source, relPath, hash, inventory }) => ({ version, pack, target, kind, id, source, relPath, hash, inventory }));
+      .map(({ version, pack, target, kind, id, source, relPath, hash, inventory }) => applySharedHashOverride({ version, pack, target, kind, id, source, relPath, hash, inventory }));
     nextManifestsByRelPath.set(manifestRelPath, { version: 1, records: sortManifestRecords([...keep, ...current]) });
   }
 
@@ -275,6 +393,14 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
       }
     }
 
+    if (cleanRewriteOpenCodeShared) {
+      if (!(await exists(cleanRewriteOpenCodeShared.absPath))) {
+        failures.push(`missing generated output: ${cleanRewriteOpenCodeShared.absPath}`);
+      } else if (!(await contentMatches(cleanRewriteOpenCodeShared.absPath, cleanRewriteOpenCodeShared.hash))) {
+        failures.push(`different generated output: ${cleanRewriteOpenCodeShared.absPath}`);
+      }
+    }
+
     for (const staleRecords of staleByManifestRelPath.values()) {
       for (const staleRecord of staleRecords) {
         failures.push(`stale managed output requires cleanup: ${path.join(targetRoot, staleRecord.relPath)}`);
@@ -288,6 +414,10 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
   }
 
   if (!options.dryRun) {
+    if (cleanRewriteOpenCodeShared) {
+      await mkdir(path.dirname(cleanRewriteOpenCodeShared.absPath), { recursive: true });
+      await writeFile(cleanRewriteOpenCodeShared.absPath, cleanRewriteOpenCodeShared.content, 'utf8');
+    }
     for (const [manifestRelPath, next] of nextManifestsByRelPath) {
       const manifestPath = path.join(targetRoot, manifestRelPath);
       if (next.records.length === 0) {
@@ -301,13 +431,14 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
   return { create, update, del };
 }
 
-export async function doctor(cwd: string, targets: ('claude' | 'codex' | 'opencode')[], kinds: ('agent' | 'skill' | 'mcp')[]): Promise<string[]> {
+export async function doctor(cwd: string, targets: ('claude' | 'codex' | 'opencode')[], kinds: ('agent' | 'skill' | 'mcp' | 'rule')[]): Promise<string[]> {
   const root = path.join(cwd, '.rac');
 
   const parsedAgents = kinds.includes('agent') ? await loadAgents(root) : [];
   const parsedSkills = kinds.includes('skill') ? await loadSkills(root) : [];
   const parsedMcps = kinds.includes('mcp') ? await loadMcps(root) : [];
-  const config = await buildRuntimeConfig({ root, agents: parsedAgents, skills: parsedSkills, mcps: parsedMcps });
+  const parsedRules = kinds.includes('rule') ? await loadRules(root) : [];
+  const config = await buildRuntimeConfig({ root, agents: parsedAgents, skills: parsedSkills, mcps: parsedMcps, rules: parsedRules });
 
   const warnings: string[] = [];
 

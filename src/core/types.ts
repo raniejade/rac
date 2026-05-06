@@ -1,6 +1,6 @@
 export type Pack = 'project';
 export type Target = 'claude' | 'codex' | 'opencode';
-export type Kind = 'agent' | 'skill' | 'mcp';
+export type Kind = 'agent' | 'skill' | 'mcp' | 'rule';
 
 export type AgentDef = {
   pack: Pack;
@@ -36,6 +36,19 @@ export type McpDef = {
   startup_timeout_ms?: number;
   vendor?: Record<string, unknown>;
   envVars: string[];
+  sourcePath: string;
+  sourceName: string;
+};
+
+export type RuleCommandItem = string | string[];
+
+export type RuleDef = {
+  pack: Pack;
+  id: string;
+  decision: 'forbidden';
+  justification: string;
+  command: RuleCommandItem[];
+  append_wildcard: boolean;
   sourcePath: string;
   sourceName: string;
 };

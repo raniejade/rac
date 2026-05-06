@@ -18,12 +18,14 @@ Inputs are loaded from the project source root:
 - `agents/*.toml`
 - `skills/*/SKILL.md` with `+++` frontmatter
 - `mcps/*.toml`
+- `rules/*.toml` with one or more `[[rule]]` tables per file
 
 Responsibilities:
 
 - Discover files with deterministic glob patterns
 - Parse and validate schema (`zod`)
 - Enforce structural constraints (duplicate IDs, MCP transport exclusivity, skill frontmatter boundaries)
+- Enforce rule constraints (`decision = "forbidden"` only, non-empty `justification`, non-empty `command`, non-empty alternatives, duplicate rule IDs across files)
 - Emit typed source definitions with source-path metadata
 
 Non-responsibilities:
@@ -41,6 +43,7 @@ Responsibilities:
 - Resolve instruction file indirection for agents
 - Resolve skill asset hashes
 - Normalize MCP transport into `local` vs `remote`
+- Normalize rule command patterns into `RuleConfig` + `ToolRuleConfig[]` with literal segments and segment-alternative arrays
 - Normalize vendor pass-through maps:
 - `vendor.<target>.config` for agent/skill/mcp target payload overlays
 - `vendor.<target>.frontmatter` for skill markdown frontmatter overlays
@@ -65,6 +68,14 @@ Current adapters:
 - `claude`
 - `codex`
 - `opencode`
+
+Rule output semantics:
+
+- Codex: `.codex/rules/<source-file>.rules` with `prefix_rule(...)` calls (one per RAC rule), preserving nested alternatives in `pattern`.
+- Claude: `.claude/settings.json` -> `permissions.deny` entries expanded from alternatives using `Bash(...)`.
+- OpenCode: `.opencode/opencode.json` -> `permission.bash` object entries expanded from alternatives (`{ "<command pattern>": "deny" }`).
+- `append_wildcard` defaults to `true`; when true, adapters append trailing ` *` in string-expanded deny entries.
+- OpenCode writes one combined `.opencode/opencode.json` payload when MCP and rules are both selected.
 
 Responsibilities:
 
