@@ -1,9 +1,10 @@
-export type Pack = 'project';
+export type Pack = string;
 export type Target = 'claude' | 'codex' | 'opencode';
 export type Kind = 'agent' | 'skill' | 'mcp' | 'rule';
 
 export type AgentDef = {
   pack: Pack;
+  packRoot: string;
   id: string;
   name?: string;
   description?: string;
@@ -16,6 +17,7 @@ export type AgentDef = {
 
 export type SkillDef = {
   pack: Pack;
+  packRoot: string;
   id: string;
   name?: string;
   description: string;
@@ -28,6 +30,7 @@ export type SkillDef = {
 
 export type McpDef = {
   pack: Pack;
+  packRoot: string;
   id: string;
   command?: string;
   args?: string[];
@@ -44,6 +47,7 @@ export type RuleCommandItem = string | string[];
 
 export type RuleDef = {
   pack: Pack;
+  packRoot: string;
   id: string;
   decision: 'forbidden';
   justification: string;
@@ -90,4 +94,17 @@ export type InstallResult = {
   create: string[];
   update: string[];
   del: string[];
+};
+
+export type PackSpec = {
+  id: string;
+  repo: string;
+  ref: string;
+};
+
+export type PackRuntime = {
+  id: string;
+  root: string;
+  sourceRepo?: string;
+  sourceRef?: string;
 };

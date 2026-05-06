@@ -78,7 +78,7 @@ async function main() {
     await expectExists(path.join(sampleRepo, '.codex', 'agents', 'reviewer.toml'));
     await expectExists(path.join(sampleRepo, '.agents', 'skills', 'project-gates', 'SKILL.md'));
     await expectExists(path.join(sampleRepo, '.codex', 'config.toml'));
-    await expectExists(path.join(sampleRepo, '.codex', 'rules', 'wrapper-deny.rules'));
+    await expectExists(path.join(sampleRepo, '.codex', 'rules', 'project', 'wrapper-deny.toml.rules'));
     await expectExists(path.join(sampleRepo, '.claude', 'settings.json'));
 
     await expectExists(path.join(sampleRepo, '.mcp.json'));

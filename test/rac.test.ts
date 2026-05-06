@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -8,7 +9,7 @@ import { describe, expect, it, afterEach } from 'vitest';
 import { adapterFor, TARGET_ADAPTERS } from '../src/adapters/target-adapters.js';
 import { buildRuntimeConfig } from '../src/core/config-model.js';
 import { doctor, initProject, install } from '../src/core/install.js';
-import { loadAgents, loadMcps, loadRules, loadSkills } from '../src/core/parsers.js';
+import { loadAgents, loadMcps, loadProjectPackConfig, loadRules, loadSharedPackConfig, loadSkills } from '../src/core/parsers.js';
 
 const tempDirs: string[] = [];
 
@@ -29,6 +30,7 @@ async function seed(root: string): Promise<void> {
   await mkdir(path.join(root, '.rac/skills/project-gates'), { recursive: true });
   await mkdir(path.join(root, '.rac/mcps'), { recursive: true });
   await mkdir(path.join(root, '.rac/rules'), { recursive: true });
+  await writeFile(path.join(root, '.rac/config.toml'), '', 'utf8');
 
   await writeFile(path.join(root, '.rac/agents/reviewer.toml'), 'id = "reviewer"\ninstructions = "./reviewer.md"\n[vendor.codex]\nemit = "instruction-only"\n[vendor.opencode]\ntools = ["legacy"]\n', 'utf8');
   await writeFile(path.join(root, '.rac/agents/reviewer.md'), 'Review this project.\n', 'utf8');
@@ -47,33 +49,33 @@ describe('parsers', () => {
     await mkdir(path.join(root, '.rac/agents'), { recursive: true });
     await writeFile(path.join(root, '.rac/agents/a.toml'), 'id = "x"\ninstructions = "hello"\n', 'utf8');
     await writeFile(path.join(root, '.rac/agents/b.toml'), 'id = "x"\ninstructions = "hello"\n', 'utf8');
-    await expect(loadAgents(path.join(root, '.rac'))).rejects.toThrow('duplicate agent id');
+    await expect(loadAgents(path.join(root, '.rac'), 'project')).rejects.toThrow('duplicate agent id');
 
     await writeFile(path.join(root, '.rac/agents/b.toml'), 'id = "y"\ninstructions = [broken\n', 'utf8');
-    await expect(loadAgents(path.join(root, '.rac'))).rejects.toThrow('invalid TOML');
+    await expect(loadAgents(path.join(root, '.rac'), 'project')).rejects.toThrow('invalid TOML');
   });
 
   it('skill parser requires +++ at byte 0 and closing delimiter', async () => {
     const root = await makeTmp();
     await mkdir(path.join(root, '.rac/skills/s1'), { recursive: true });
     await writeFile(path.join(root, '.rac/skills/s1/SKILL.md'), 'bad\n+++\ndescription = "x"\n+++\nbody\n', 'utf8');
-    await expect(loadSkills(path.join(root, '.rac'))).rejects.toThrow('byte 0');
+    await expect(loadSkills(path.join(root, '.rac'), 'project')).rejects.toThrow('byte 0');
 
     await writeFile(path.join(root, '.rac/skills/s1/SKILL.md'), '+++\ndescription = "x"\nbody\n', 'utf8');
-    await expect(loadSkills(path.join(root, '.rac'))).rejects.toThrow('missing closing +++ delimiter');
+    await expect(loadSkills(path.join(root, '.rac'), 'project')).rejects.toThrow('missing closing +++ delimiter');
   });
 
   it('mcp parser enforces local xor remote and collects env vars', async () => {
     const root = await makeTmp();
     await mkdir(path.join(root, '.rac/mcps'), { recursive: true });
     await writeFile(path.join(root, '.rac/mcps/a.toml'), 'id = "a"\n', 'utf8');
-    await expect(loadMcps(path.join(root, '.rac'))).rejects.toThrow('local command OR remote type+url');
+    await expect(loadMcps(path.join(root, '.rac'), 'project')).rejects.toThrow('local command OR remote type+url');
 
     await writeFile(path.join(root, '.rac/mcps/a.toml'), 'id = "a"\ncommand = "node"\nargs = ["${X}"]\ntype = "remote"\nurl = "https://x"\n', 'utf8');
-    await expect(loadMcps(path.join(root, '.rac'))).rejects.toThrow('cannot define both local and remote transport');
+    await expect(loadMcps(path.join(root, '.rac'), 'project')).rejects.toThrow('cannot define both local and remote transport');
 
     await writeFile(path.join(root, '.rac/mcps/a.toml'), 'id = "a"\ncommand = "node"\nargs = ["${X}", "${Y}"]\n', 'utf8');
-    const parsed = await loadMcps(path.join(root, '.rac'));
+    const parsed = await loadMcps(path.join(root, '.rac'), 'project');
     expect(parsed[0].envVars).toEqual(['X', 'Y']);
   });
 
@@ -81,23 +83,23 @@ describe('parsers', () => {
     const root = await makeTmp();
     await mkdir(path.join(root, '.rac/rules'), { recursive: true });
     await writeFile(path.join(root, '.rac/rules/a.toml'), 'id = "x"\n', 'utf8');
-    await expect(loadRules(path.join(root, '.rac'))).rejects.toThrow('missing [[rule]] entries');
+    await expect(loadRules(path.join(root, '.rac'), 'project')).rejects.toThrow('missing [[rule]] entries');
 
     await writeFile(path.join(root, '.rac/rules/a.toml'), '[[rule]]\nid = "r1"\ndecision = "allow"\njustification = "x"\ncommand = ["git"]\n', 'utf8');
-    await expect(loadRules(path.join(root, '.rac'))).rejects.toThrow('unsupported rule decision');
+    await expect(loadRules(path.join(root, '.rac'), 'project')).rejects.toThrow('unsupported rule decision');
 
     await writeFile(path.join(root, '.rac/rules/a.toml'), '[[rule]]\nid = "r1"\ndecision = "forbidden"\njustification = ""\ncommand = ["git"]\n', 'utf8');
-    await expect(loadRules(path.join(root, '.rac'))).rejects.toThrow();
+    await expect(loadRules(path.join(root, '.rac'), 'project')).rejects.toThrow();
 
     await writeFile(path.join(root, '.rac/rules/a.toml'), '[[rule]]\nid = "r1"\ndecision = "forbidden"\njustification = "x"\ncommand = []\n', 'utf8');
-    await expect(loadRules(path.join(root, '.rac'))).rejects.toThrow('empty command list');
+    await expect(loadRules(path.join(root, '.rac'), 'project')).rejects.toThrow('empty command list');
 
     await writeFile(path.join(root, '.rac/rules/a.toml'), '[[rule]]\nid = "r1"\ndecision = "forbidden"\njustification = "x"\ncommand = [["git"], []]\n', 'utf8');
-    await expect(loadRules(path.join(root, '.rac'))).rejects.toThrow('empty command alternative array');
+    await expect(loadRules(path.join(root, '.rac'), 'project')).rejects.toThrow('empty command alternative array');
 
     await writeFile(path.join(root, '.rac/rules/a.toml'), '[[rule]]\nid = "r1"\ndecision = "forbidden"\njustification = "x"\ncommand = ["git"]\n', 'utf8');
     await writeFile(path.join(root, '.rac/rules/b.toml'), '[[rule]]\nid = "r1"\ndecision = "forbidden"\njustification = "x"\ncommand = ["gh"]\n', 'utf8');
-    await expect(loadRules(path.join(root, '.rac'))).rejects.toThrow('duplicate rule id');
+    await expect(loadRules(path.join(root, '.rac'), 'project')).rejects.toThrow('duplicate rule id');
   });
 });
 
@@ -108,10 +110,10 @@ describe('runtime config + adapters', () => {
     const sourceRoot = path.join(root, '.rac');
     const config = await buildRuntimeConfig({
       root: sourceRoot,
-      agents: await loadAgents(sourceRoot),
-      skills: await loadSkills(sourceRoot),
-      mcps: await loadMcps(sourceRoot),
-      rules: await loadRules(sourceRoot)
+      agents: await loadAgents(sourceRoot, 'project'),
+      skills: await loadSkills(sourceRoot, 'project'),
+      mcps: await loadMcps(sourceRoot, 'project'),
+      rules: await loadRules(sourceRoot, 'project')
     });
 
     expect(config.agents[0].instructions).toContain('Review this project.');
@@ -125,10 +127,10 @@ describe('runtime config + adapters', () => {
     const sourceRoot = path.join(root, '.rac');
     const config = await buildRuntimeConfig({
       root: sourceRoot,
-      agents: await loadAgents(sourceRoot),
-      skills: await loadSkills(sourceRoot),
-      mcps: await loadMcps(sourceRoot),
-      rules: await loadRules(sourceRoot)
+      agents: await loadAgents(sourceRoot, 'project'),
+      skills: await loadSkills(sourceRoot, 'project'),
+      mcps: await loadMcps(sourceRoot, 'project'),
+      rules: await loadRules(sourceRoot, 'project')
     });
 
     const claude = adapterFor('claude').plan(config);
@@ -146,10 +148,10 @@ describe('runtime config + adapters', () => {
     const sourceRoot = path.join(root, '.rac');
     const config = await buildRuntimeConfig({
       root: sourceRoot,
-      agents: await loadAgents(sourceRoot),
-      skills: await loadSkills(sourceRoot),
-      mcps: await loadMcps(sourceRoot),
-      rules: await loadRules(sourceRoot)
+      agents: await loadAgents(sourceRoot, 'project'),
+      skills: await loadSkills(sourceRoot, 'project'),
+      mcps: await loadMcps(sourceRoot, 'project'),
+      rules: await loadRules(sourceRoot, 'project')
     });
 
     const claudeSkill = adapterFor('claude')
@@ -200,6 +202,7 @@ describe('install + doctor', () => {
     const root = await makeTmp();
     await mkdir(path.join(root, '.rac/agents'), { recursive: true });
     await mkdir(path.join(root, '.rac/skills/s1'), { recursive: true });
+    await writeFile(path.join(root, '.rac/config.toml'), '', 'utf8');
 
     await writeFile(path.join(root, '.rac/agents/a.toml'), 'id = "a"\ninstructions = "../../etc/passwd"\n', 'utf8');
     await expect(install({ cwd: root, targets: ['codex'], kinds: ['agent'] })).rejects.toThrow('agent instructions traversal rejected');
@@ -267,7 +270,7 @@ describe('install + doctor', () => {
 
     await install({ cwd: root, targets: ['claude', 'codex', 'opencode'], kinds: ['mcp', 'rule'] });
 
-    const codexRules = await readFile(path.join(root, '.codex/rules/wrappers.rules'), 'utf8');
+    const codexRules = await readFile(path.join(root, '.codex/rules/project/wrappers.toml.rules'), 'utf8');
     expect(codexRules).toContain('prefix_rule([');
     expect(codexRules).toContain('["gh",["pr","issue"],"merge"]');
 
@@ -483,6 +486,7 @@ describe('install + doctor', () => {
   it('vendor compatibility schema: Codex agent TOML emits name/description/developer_instructions and rejects id/instructions keys', async () => {
     const root = await makeTmp();
     await mkdir(path.join(root, '.rac/agents'), { recursive: true });
+    await writeFile(path.join(root, '.rac/config.toml'), '', 'utf8');
     await writeFile(path.join(root, '.rac/agents/reviewer.toml'), 'id = "reviewer"\ninstructions = "./reviewer.md"\n', 'utf8');
     await writeFile(path.join(root, '.rac/agents/reviewer.md'), 'line "one"\nline two\n', 'utf8');
 
@@ -501,6 +505,7 @@ describe('install + doctor', () => {
   it('vendor pass-through: Codex agent TOML keeps model/model_reasoning_effort/sandbox_mode from vendor.codex.config', async () => {
     const root = await makeTmp();
     await mkdir(path.join(root, '.rac/agents'), { recursive: true });
+    await writeFile(path.join(root, '.rac/config.toml'), '', 'utf8');
     await writeFile(
       path.join(root, '.rac/agents/reviewer.toml'),
       'id = "reviewer"\ninstructions = "./reviewer.md"\n[vendor.codex.config]\nmodel = "gpt-5"\nmodel_reasoning_effort = "high"\nsandbox_mode = "workspace-write"\n',
@@ -559,6 +564,7 @@ describe('install + doctor', () => {
   it('vendor pass-through: MCP config supports vendor.<target>.config for claude/codex/opencode', async () => {
     const root = await makeTmp();
     await mkdir(path.join(root, '.rac/mcps'), { recursive: true });
+    await writeFile(path.join(root, '.rac/config.toml'), '', 'utf8');
     await writeFile(
       path.join(root, '.rac/mcps/server.toml'),
       'id = "server"\ncommand = "node"\nargs = ["./mcp.js"]\n[vendor.claude.config]\nnotes = "claude"\n[vendor.codex.config]\nenabled = true\n[vendor.opencode.config]\nreadOnly = true\n',
@@ -579,6 +585,7 @@ describe('install + doctor', () => {
   it('vendor pass-through: skill vendor.<target>.config overlays markdown frontmatter for claude/codex/opencode', async () => {
     const root = await makeTmp();
     await mkdir(path.join(root, '.rac/skills/s1'), { recursive: true });
+    await writeFile(path.join(root, '.rac/config.toml'), '', 'utf8');
     await writeFile(
       path.join(root, '.rac/skills/s1/SKILL.md'),
       '+++\ndescription = "skill"\n[vendor.claude.config]\naudience = "claude-config"\n[vendor.codex.config]\nmodel = "gpt-5"\n[vendor.opencode.config]\nenabled = true\n+++\nbody\n',
@@ -606,6 +613,7 @@ describe('install + doctor', () => {
   it('fails fast on vendor collision with generated keys and on instruction-only + codex config incompatibility', async () => {
     const root = await makeTmp();
     await mkdir(path.join(root, '.rac/agents'), { recursive: true });
+    await writeFile(path.join(root, '.rac/config.toml'), '', 'utf8');
     await writeFile(
       path.join(root, '.rac/agents/reviewer.toml'),
       'id = "reviewer"\ninstructions = "inline"\n[vendor.codex.config]\nname = "nope"\n',
@@ -647,5 +655,92 @@ describe('install + doctor', () => {
     const packageJson = JSON.parse(await readFile(path.join(process.cwd(), 'package.json'), 'utf8')) as { scripts?: Record<string, string> };
     expect(packageJson.scripts?.lint).toBeDefined();
     expect(packageJson.scripts?.['lint:fix']).toBeDefined();
+  });
+
+  it('init and init --empty always create .rac/config.toml', async () => {
+    const root = await makeTmp();
+    await initProject(root, true);
+    await expect(stat(path.join(root, '.rac/config.toml'))).resolves.toBeTruthy();
+
+    await writeFile(path.join(root, '.rac/config.toml'), '[[packs]]\nid = "shared"\nrepo = "github:owner/repo"\nref = "main"\n', 'utf8');
+    await initProject(root, true);
+    expect(await readFile(path.join(root, '.rac/config.toml'), 'utf8')).toContain('id = "shared"');
+  });
+
+  it('requires project .rac/config.toml and validates packs config', async () => {
+    const root = await makeTmp();
+    await mkdir(path.join(root, '.rac/agents'), { recursive: true });
+    await writeFile(path.join(root, '.rac/agents/a.toml'), 'id = "a"\ninstructions = "x"\n', 'utf8');
+    await expect(install({ cwd: root, targets: ['codex'], kinds: ['agent'] })).rejects.toThrow('missing required config');
+
+    await writeFile(path.join(root, '.rac/config.toml'), '[[packs]]\nid = "bad id"\nrepo = "github:owner/repo"\nref = "main"\n', 'utf8');
+    await expect(install({ cwd: root, targets: ['codex'], kinds: ['agent'] })).rejects.toThrow('invalid pack id');
+
+    await writeFile(path.join(root, '.rac/config.toml'), '[[packs]]\nid = "project"\nrepo = "github:owner/repo"\nref = "main"\n', 'utf8');
+    await expect(loadProjectPackConfig(path.join(root, '.rac'))).rejects.toThrow('project is reserved');
+
+    await writeFile(path.join(root, '.rac/config.toml'), '[[packs]]\nid = "shared"\nrepo = "github:owner/repo"\n', 'utf8');
+    await expect(install({ cwd: root, targets: ['codex'], kinds: ['agent'] })).rejects.toThrow('missing packs.ref');
+
+    await writeFile(path.join(root, '.rac/config.toml'), '[[packs]]\nid = "shared"\nrepo = "https://github.com/owner/repo"\nref = "main"\n', 'utf8');
+    await expect(loadProjectPackConfig(path.join(root, '.rac'))).rejects.toThrow('invalid pack repo');
+
+    await writeFile(path.join(root, '.rac/config.toml'), '[[packs]]\nid = "shared"\nrepo = "github:owner/repo"\nref = "bad ref"\n', 'utf8');
+    await expect(loadProjectPackConfig(path.join(root, '.rac'))).rejects.toThrow('invalid pack ref');
+  });
+
+  it('accepts empty shared config and rejects shared transitive packs', async () => {
+    const root = await makeTmp();
+    await mkdir(path.join(root, '.rac'), { recursive: true });
+    await writeFile(path.join(root, '.rac/config.toml'), '', 'utf8');
+    await expect(loadSharedPackConfig(path.join(root, '.rac'))).resolves.toBeUndefined();
+
+    await writeFile(path.join(root, '.rac/config.toml'), '[[packs]]\nid = "nested"\nrepo = "github:owner/repo"\nref = "main"\n', 'utf8');
+    await expect(loadSharedPackConfig(path.join(root, '.rac'))).rejects.toThrow('shared pack config cannot contain [[packs]]');
+  });
+
+  it('fails fast on duplicate kind/id across active packs', async () => {
+    if (spawnSync('git', ['--version']).status !== 0) return;
+    const root = await makeTmp();
+    const cacheRoot = path.join(root, '.cache');
+    process.env.RAC_CACHE_DIR = cacheRoot;
+    try {
+      const remote = path.join(root, 'remote');
+      await mkdir(path.join(remote, '.rac/agents'), { recursive: true });
+      await writeFile(path.join(remote, '.rac/config.toml'), '', 'utf8');
+      await writeFile(path.join(remote, '.rac/agents/reviewer.toml'), 'id = "reviewer"\ninstructions = "shared"\n', 'utf8');
+      spawnSync('git', ['init'], { cwd: remote });
+      spawnSync('git', ['add', '.'], { cwd: remote });
+      spawnSync('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-m', 'init'], { cwd: remote });
+      await mkdir(path.join(root, '.rac/agents'), { recursive: true });
+      await writeFile(path.join(root, '.rac/agents/reviewer.toml'), 'id = "reviewer"\ninstructions = "project"\n', 'utf8');
+      await writeFile(path.join(root, '.rac/config.toml'), '[[packs]]\nid = "shared"\nrepo = "github:owner/repo"\nref = "HEAD"\n', 'utf8');
+
+      const key = Buffer.from('github:owner/repo@HEAD').toString('base64url');
+      const cachedRepo = path.join(cacheRoot, 'packs', key);
+      await mkdir(path.dirname(cachedRepo), { recursive: true });
+      spawnSync('git', ['clone', remote, cachedRepo]);
+
+      await expect(install({ cwd: root, targets: ['codex'], kinds: ['agent'] })).rejects.toThrow('duplicate agent id across packs');
+      await expect(doctor(root, ['codex'], ['agent'])).rejects.toThrow('duplicate agent id across packs');
+    } finally {
+      delete process.env.RAC_CACHE_DIR;
+    }
+  });
+
+  it('uses pack-aware codex rule paths', async () => {
+    const root = await makeTmp();
+    await seed(root);
+    await install({ cwd: root, targets: ['codex'], kinds: ['rule'] });
+    await expect(stat(path.join(root, '.codex/rules/project/wrappers.toml.rules'))).resolves.toBeTruthy();
+  });
+
+  it('rejects planned-output collisions when different content targets same path', async () => {
+    const root = await makeTmp();
+    await mkdir(path.join(root, '.rac/agents'), { recursive: true });
+    await writeFile(path.join(root, '.rac/config.toml'), '', 'utf8');
+    await writeFile(path.join(root, '.rac/agents/a.toml'), 'id = "same"\ninstructions = "A"\n', 'utf8');
+    await writeFile(path.join(root, '.rac/agents/b.toml'), 'id = "same"\ninstructions = "B"\n', 'utf8');
+    await expect(install({ cwd: root, targets: ['claude'], kinds: ['agent'] })).rejects.toThrow();
   });
 });
