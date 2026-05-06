@@ -39,7 +39,7 @@ function repoToGitUrl(repo: string): string {
   return `https://github.com/${match[1]}/${match[2]}.git`;
 }
 
-function validatePackSpec(spec: PackSpec): void {
+export function validatePackSpec(spec: PackSpec): void {
   if (!PACK_ID_RE.test(spec.id)) throw new Error(`invalid pack id; use ASCII path-safe letters/numbers/./_/-: ${spec.id}`);
   if (spec.id === 'project') throw new Error('invalid pack id; project is reserved for the local project pack');
   if (!GITHUB_REPO_RE.test(spec.repo)) throw new Error(`invalid pack repo; expected github:owner/repo: ${spec.repo}`);

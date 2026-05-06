@@ -27,10 +27,13 @@ npx github:raniejade/rac init
 # 2) Validate definitions
 npx github:raniejade/rac doctor
 
-# 3) Preview generated changes
+# 3) Add a shared pack
+npx github:raniejade/rac pack add platform-rules github:owner/repo --ref main
+
+# 4) Preview generated changes
 npx github:raniejade/rac install --dry-run
 
-# 4) Apply
+# 5) Apply
 npx github:raniejade/rac install
 ```
 
@@ -209,6 +212,37 @@ Without `--force`, overwrite rules are:
 - blocked: unmanaged JSON files
 - blocked: other unmanaged files without markers
 
+### `pack add`
+
+Append a top-level `[[packs]]` entry to `.rac/config.toml`.
+
+```bash
+rac pack add <id> <repo> --ref <ref>
+```
+
+- `id` must be ASCII path-safe: `A-Z a-z 0-9 . _ -` and cannot be `project`.
+- `repo` must use `github:owner/repo`.
+- `--ref` is required and must not contain whitespace.
+
+### `pack list`
+
+List configured packs in config order.
+
+```bash
+rac pack list
+```
+
+- Output format: `<id> <repo> <ref>` (one per line)
+- Prints `-` when no packs are configured.
+
+### `pack remove`
+
+Remove a top-level `[[packs]]` entry by id.
+
+```bash
+rac pack remove <id>
+```
+
 ## Target Outputs and Install Manifests
 
 Install manifests are used to track managed files and cleanup behavior.
@@ -244,16 +278,19 @@ Install manifests are used to track managed files and cleanup behavior.
 Use this sequence when enabling or changing definitions:
 
 ```bash
-# Validate first
+# Add/update shared pack references
+rac pack add platform-rules github:owner/repo --ref main
+
+# Validate definitions
 rac doctor
 
-# Preview planned create/update changes (no writes)
-rac install --dry-run
+# Apply selected targets/kinds
+rac install
 
-# Apply selected targets/kinds if needed
-rac install --target codex --kind agent,skill,mcp
+# Remove a shared pack when retiring it
+rac pack remove platform-rules
 
-# Optional: run stale managed-output cleanup after reviewing current definitions/managed outputs
+# Clean stale managed outputs
 rac install --clean
 ```
 

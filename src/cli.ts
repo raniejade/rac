@@ -2,6 +2,7 @@
 import { Command, InvalidArgumentError } from 'commander';
 
 import { doctor, initProject, install } from './core/install.js';
+import { addProjectPack, listProjectPacks, removeProjectPack } from './core/pack-config.js';
 import type { Kind, Target } from './core/types.js';
 import { splitCsv } from './core/util.js';
 
@@ -77,6 +78,36 @@ program.command('doctor')
       return;
     }
     for (const warning of warnings) console.log(warning);
+  });
+
+const packProgram = program.command('pack')
+  .description('Manage top-level [[packs]] entries in .rac/config.toml');
+
+packProgram.command('add')
+  .description('Add a shared pack reference to .rac/config.toml')
+  .argument('<id>')
+  .argument('<repo>')
+  .requiredOption('--ref <ref>')
+  .action(async (id: string, repo: string, opts: { ref: string }) => {
+    await addProjectPack(process.cwd(), { id, repo, ref: opts.ref });
+  });
+
+packProgram.command('list')
+  .description('List configured shared packs')
+  .action(async () => {
+    const packs = await listProjectPacks(process.cwd());
+    if (packs.length === 0) {
+      console.log('-');
+      return;
+    }
+    for (const pack of packs) console.log(`${pack.id} ${pack.repo} ${pack.ref}`);
+  });
+
+packProgram.command('remove')
+  .description('Remove a shared pack reference by id')
+  .argument('<id>')
+  .action(async (id: string) => {
+    await removeProjectPack(process.cwd(), id);
   });
 
 program.parseAsync(process.argv).catch((error) => {

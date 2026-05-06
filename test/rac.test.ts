@@ -9,14 +9,30 @@ import { describe, expect, it, afterEach } from 'vitest';
 import { adapterFor, TARGET_ADAPTERS } from '../src/adapters/target-adapters.js';
 import { buildRuntimeConfig } from '../src/core/config-model.js';
 import { doctor, initProject, install } from '../src/core/install.js';
+import { addProjectPack, listProjectPacks, removeProjectPack } from '../src/core/pack-config.js';
 import { loadAgents, loadMcps, loadProjectPackConfig, loadRules, loadSharedPackConfig, loadSkills } from '../src/core/parsers.js';
 
 const tempDirs: string[] = [];
+let cliBuilt = false;
 
 async function makeTmp(): Promise<string> {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'rac-'));
   tempDirs.push(dir);
   return dir;
+}
+
+function runCli(cwd: string, args: string[]): { status: number | null; stdout: string; stderr: string } {
+  if (!cliBuilt) {
+    const build = spawnSync('npm', ['run', 'build'], { cwd: process.cwd(), encoding: 'utf8' });
+    if (build.status !== 0) throw new Error(`failed building CLI for tests: ${build.stderr || build.stdout}`);
+    cliBuilt = true;
+  }
+  const result = spawnSync('node', [path.join(process.cwd(), 'dist/cli.js'), ...args], { cwd, encoding: 'utf8' });
+  return {
+    status: result.status,
+    stdout: result.stdout,
+    stderr: result.stderr
+  };
 }
 
 afterEach(async () => {
@@ -44,6 +60,94 @@ async function seed(root: string): Promise<void> {
 }
 
 describe('parsers', () => {
+  it('pack config add/list/remove enforces validation and preserves unrelated content', async () => {
+    const root = await makeTmp();
+    await mkdir(path.join(root, '.rac'), { recursive: true });
+
+    await expect(listProjectPacks(root)).rejects.toThrow('missing required config');
+    await expect(addProjectPack(root, { id: 'a', repo: 'github:owner/repo', ref: 'main' })).rejects.toThrow('missing required config');
+    await expect(removeProjectPack(root, 'a')).rejects.toThrow('missing required config');
+
+    await writeFile(path.join(root, '.rac/config.toml'), 'title = "demo"\n', 'utf8');
+
+    await expect(addProjectPack(root, { id: 'bad id', repo: 'github:owner/repo', ref: 'main' })).rejects.toThrow('invalid pack id');
+    await expect(addProjectPack(root, { id: 'project', repo: 'github:owner/repo', ref: 'main' })).rejects.toThrow('project is reserved');
+    await expect(addProjectPack(root, { id: 'good', repo: 'https://github.com/owner/repo', ref: 'main' })).rejects.toThrow('invalid pack repo');
+    await expect(addProjectPack(root, { id: 'good', repo: 'github:owner/repo', ref: 'bad ref' })).rejects.toThrow('invalid pack ref');
+
+    const before = await readFile(path.join(root, '.rac/config.toml'), 'utf8');
+    await addProjectPack(root, { id: 'alpha', repo: 'github:owner/alpha', ref: 'main' });
+    const afterOne = await readFile(path.join(root, '.rac/config.toml'), 'utf8');
+    expect(afterOne.startsWith(before)).toBe(true);
+    expect(afterOne).toContain('[[packs]]\nid = "alpha"\nrepo = "github:owner/alpha"\nref = "main"\n');
+
+    await addProjectPack(root, { id: 'beta', repo: 'github:owner/beta', ref: 'v1' });
+    await expect(addProjectPack(root, { id: 'alpha', repo: 'github:owner/alpha', ref: 'main' })).rejects.toThrow('duplicate pack id');
+
+    const listed = await listProjectPacks(root);
+    expect(listed.map((pack) => `${pack.id} ${pack.repo} ${pack.ref}`)).toEqual([
+      'alpha github:owner/alpha main',
+      'beta github:owner/beta v1'
+    ]);
+
+    await expect(removeProjectPack(root, 'missing')).rejects.toThrow('pack not found');
+    await removeProjectPack(root, 'alpha');
+    const afterRemove = await readFile(path.join(root, '.rac/config.toml'), 'utf8');
+    expect(afterRemove).toContain('title = "demo"');
+    expect(afterRemove).not.toContain('id = "alpha"');
+    expect(afterRemove).toContain('id = "beta"');
+    expect((await listProjectPacks(root)).map((pack) => pack.id)).toEqual(['beta']);
+  });
+
+  it('cli pack add/list/remove wiring handles required ref, list formatting, escaping, and errors', async () => {
+    const root = await makeTmp();
+    await mkdir(path.join(root, '.rac'), { recursive: true });
+    await writeFile(path.join(root, '.rac/config.toml'), 'title = "demo"\r\n\r\n\r\n[other]\r\nvalue = "keep"\r\n', 'utf8');
+
+    const listEmpty = runCli(root, ['pack', 'list']);
+    expect(listEmpty.status).toBe(0);
+    expect(listEmpty.stdout).toBe('-\n');
+
+    const missingRef = runCli(root, ['pack', 'add', 'alpha', 'github:owner/alpha']);
+    expect(missingRef.status).toBe(2);
+    expect(missingRef.stderr).toContain("required option '--ref <ref>'");
+
+    const add = runCli(root, ['pack', 'add', 'alpha', 'github:owner/alpha', '--ref', 'tag"\\candidate']);
+    expect(add.status).toBe(0);
+    const parsed = parseToml(await readFile(path.join(root, '.rac/config.toml'), 'utf8')) as {
+      packs?: Array<{ id?: string; repo?: string; ref?: string }>;
+    };
+    expect(parsed.packs?.[0]).toEqual({
+      id: 'alpha',
+      repo: 'github:owner/alpha',
+      ref: 'tag"\\candidate'
+    });
+
+    const listOne = runCli(root, ['pack', 'list']);
+    expect(listOne.status).toBe(0);
+    expect(listOne.stdout).toBe('alpha github:owner/alpha tag"\\candidate\n');
+
+    const removeMissing = runCli(root, ['pack', 'remove', 'missing']);
+    expect(removeMissing.status).toBe(1);
+    expect(removeMissing.stderr).toContain('pack not found: missing');
+  });
+
+  it('cli pack remove matches whitespace/commented [[ packs ]] headers and preserves unrelated file fidelity', async () => {
+    const root = await makeTmp();
+    await mkdir(path.join(root, '.rac'), { recursive: true });
+    await writeFile(
+      path.join(root, '.rac/config.toml'),
+      'title = "demo"\r\n\r\n   [[ packs ]]   # keep-comment\r\nid = "alpha"\r\nrepo = "github:owner/alpha"\r\nref = "main"\r\n\r\n\r\n[other]\r\nvalue = "keep"\r\n',
+      'utf8'
+    );
+
+    const remove = runCli(root, ['pack', 'remove', 'alpha']);
+    expect(remove.status).toBe(0);
+
+    const updated = await readFile(path.join(root, '.rac/config.toml'), 'utf8');
+    expect(updated).toBe('title = "demo"\r\n\r\n[other]\r\nvalue = "keep"\r\n');
+  });
+
   it('agent parser validates TOML and duplicate ids', async () => {
     const root = await makeTmp();
     await mkdir(path.join(root, '.rac/agents'), { recursive: true });
