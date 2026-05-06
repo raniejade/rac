@@ -15,6 +15,10 @@ The core ownership rule is: upstream stages do not know about downstream file fo
 
 Inputs are loaded from the project source root:
 
+- Required `.rac/config.toml` at every pack root
+- Project mode supports top-level `[[packs]]` entries (`id`, `repo = "github:owner/repo"`, required `ref`)
+- Shared mode rejects any `[[packs]]` (no transitive packs)
+
 - `agents/*.toml`
 - `skills/*/SKILL.md` with `+++` frontmatter
 - `mcps/*.toml`
@@ -22,9 +26,13 @@ Inputs are loaded from the project source root:
 
 Responsibilities:
 
+- Resolve active packs before parsing (project + configured shared packs)
+- Resolve `github:owner/repo` to `https://github.com/owner/repo.git`
+- Fetch/checkout shared refs with system `git` into RAC cache
 - Discover files with deterministic glob patterns
 - Parse and validate schema (`zod`)
 - Enforce structural constraints (duplicate IDs, MCP transport exclusivity, skill frontmatter boundaries)
+- Enforce duplicate `(kind,id)` rejection across active packs
 - Enforce rule constraints (`decision = "forbidden"` only, non-empty `justification`, non-empty `command`, non-empty alternatives, duplicate rule IDs across files)
 - Emit typed source definitions with source-path metadata
 
@@ -71,7 +79,7 @@ Current adapters:
 
 Rule output semantics:
 
-- Codex: `.codex/rules/<source-file>.rules` with `prefix_rule(...)` calls (one per RAC rule), preserving nested alternatives in `pattern`.
+- Codex: `.codex/rules/<pack-id>/<source-file>.rules` with `prefix_rule(...)` calls (one per RAC rule), preserving nested alternatives in `pattern`.
 - Claude: `.claude/settings.json` -> `permissions.deny` entries expanded from alternatives using `Bash(...)`.
 - OpenCode: `.opencode/opencode.json` -> `permission.bash` object entries expanded from alternatives (`{ "<command pattern>": "deny" }`).
 - `append_wildcard` defaults to `true`; when true, adapters append trailing ` *` in string-expanded deny entries.
@@ -83,6 +91,7 @@ Responsibilities:
 - Render target-specific content formats
 - Apply vendor pass-through overlays verbatim
 - Preserve source metadata + deterministic content hash
+- Preserve originating pack IDs in each output record
 - Mark JSON outputs when overwrite policy should be stricter
 
 Non-responsibilities:
@@ -104,6 +113,7 @@ Responsibilities:
 
 - Build a full plan by combining selected kinds + targets
 - Apply overwrite guardrails (`canOverwrite`) with managed-file checks
+- Detect planned-output path collisions and fail when colliding records produce different content
 - Write files (content or asset copy) exactly once per destination path
 - Optionally clean stale managed outputs
 - Persist vendor-local install manifests per target/kind:
@@ -115,6 +125,7 @@ Responsibilities:
 Safety model:
 
 - Managed ownership is tracked in vendor-local manifests using `relPath` + inventory selectors
+- Manifest identity includes pack ID, so removed shared packs clean as stale outputs
 - Unmanaged files are protected from overwrite unless explicit conditions are met (`force`, manifest-owned, or managed markers for text outputs)
 - Deletions are constrained to stale manifest-owned outputs when `clean` is enabled
 

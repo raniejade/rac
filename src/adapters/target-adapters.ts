@@ -71,17 +71,17 @@ function claudeAdapter(): TargetAdapter {
         );
         const content = textManagedPayload(frontmatter, agent.instructions);
         const relPath = `.claude/agents/${agent.id}.md`;
-        outputs.push({ pack: 'project', target: 'claude', kind: 'agent', id: agent.id, source: agent.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('claude', 'agent'), inventory: [{ version: 1, format: 'markdown', selector: '$' }], content, hash: sha256(content), isJson: false });
+        outputs.push({ pack: agent.pack, target: 'claude', kind: 'agent', id: agent.id, source: agent.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('claude', 'agent'), inventory: [{ version: 1, format: 'markdown', selector: '$' }], content, hash: sha256(content), isJson: false });
       }
 
       for (const skill of config.skills) {
         const frontmatter = skill.claudeFrontmatter ?? skill.frontmatter;
         const content = textManagedPayload(frontmatter, skill.body);
         const relPath = `.claude/skills/${skill.id}/SKILL.md`;
-        outputs.push({ pack: 'project', target: 'claude', kind: 'skill', id: skill.id, source: skill.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('claude', 'skill'), inventory: [{ version: 1, format: 'markdown', selector: '$' }], content, hash: sha256(content), isJson: false });
+        outputs.push({ pack: skill.pack, target: 'claude', kind: 'skill', id: skill.id, source: skill.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('claude', 'skill'), inventory: [{ version: 1, format: 'markdown', selector: '$' }], content, hash: sha256(content), isJson: false });
         for (const asset of skill.assets) {
           const relPath = skillAssetTargetPath('claude', skill.id, asset);
-          outputs.push({ pack: 'project', target: 'claude', kind: 'skill', id: skill.id, source: asset.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('claude', 'skill'), inventory: [{ version: 1, format: 'file', selector: '$' }], sourceFile: asset.source.absPath, hash: asset.hash, isJson: false });
+          outputs.push({ pack: asset.pack, target: 'claude', kind: 'skill', id: skill.id, source: asset.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('claude', 'skill'), inventory: [{ version: 1, format: 'file', selector: '$' }], sourceFile: asset.source.absPath, hash: asset.hash, isJson: false });
         }
       }
 
@@ -96,7 +96,7 @@ function claudeAdapter(): TargetAdapter {
         ]));
         const content = `${JSON.stringify({ mcpServers }, null, 2)}\n`;
         for (const mcp of config.mcps) {
-          outputs.push({ pack: 'project', target: 'claude', kind: 'mcp', id: mcp.id, source: mcp.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('claude', 'mcp'), inventory: [{ version: 1, format: 'json', selector: `$.mcpServers.${mcp.id}` }], content, hash: sha256(content), isJson: true });
+          outputs.push({ pack: mcp.pack, target: 'claude', kind: 'mcp', id: mcp.id, source: mcp.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('claude', 'mcp'), inventory: [{ version: 1, format: 'json', selector: `$.mcpServers.${mcp.id}` }], content, hash: sha256(content), isJson: true });
         }
       }
 
@@ -118,7 +118,7 @@ function claudeAdapter(): TargetAdapter {
         }
         const content = `${JSON.stringify({ permissions: { deny } }, null, 2)}\n`;
         for (const rule of config.rules) {
-          outputs.push({ pack: 'project', target: 'claude', kind: 'rule', id: rule.id, source: rule.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('claude', 'rule'), inventory: [{ version: 1, format: 'json', selector: '$.permissions.deny' }], content, hash: sha256(content), isJson: true });
+          outputs.push({ pack: rule.pack, target: 'claude', kind: 'rule', id: rule.id, source: rule.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('claude', 'rule'), inventory: [{ version: 1, format: 'json', selector: '$.permissions.deny' }], content, hash: sha256(content), isJson: true });
         }
       }
 
@@ -142,7 +142,7 @@ function codexAdapter(): TargetAdapter {
         if (agent.vendor.codexEmitInstructionOnly) {
           const content = textManagedPayload(frontmatter, agent.instructions);
           const relPath = `.codex/agents/${agent.id}.md`;
-          outputs.push({ pack: 'project', target: 'codex', kind: 'agent', id: agent.id, source: agent.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('codex', 'agent'), inventory: [{ version: 1, format: 'markdown', selector: '$' }], content, hash: sha256(content), isJson: false });
+          outputs.push({ pack: agent.pack, target: 'codex', kind: 'agent', id: agent.id, source: agent.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('codex', 'agent'), inventory: [{ version: 1, format: 'markdown', selector: '$' }], content, hash: sha256(content), isJson: false });
         } else {
           const generated: Record<string, unknown> = {
             name: agent.id,
@@ -154,17 +154,17 @@ function codexAdapter(): TargetAdapter {
           for (const [key, value] of Object.entries(merged)) lines.push(`${key} = ${toTomlValue(value)}`);
           const content = `${lines.join('\n')}\n`;
           const relPath = `.codex/agents/${agent.id}.toml`;
-          outputs.push({ pack: 'project', target: 'codex', kind: 'agent', id: agent.id, source: agent.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('codex', 'agent'), inventory: [{ version: 1, format: 'toml', selector: '$' }], content, hash: sha256(content), isJson: false });
+          outputs.push({ pack: agent.pack, target: 'codex', kind: 'agent', id: agent.id, source: agent.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('codex', 'agent'), inventory: [{ version: 1, format: 'toml', selector: '$' }], content, hash: sha256(content), isJson: false });
         }
       }
 
       for (const skill of config.skills) {
         const content = textManagedPayload(skill.codexFrontmatter ?? skill.frontmatter, skill.body);
         const relPath = `.agents/skills/${skill.id}/SKILL.md`;
-        outputs.push({ pack: 'project', target: 'codex', kind: 'skill', id: skill.id, source: skill.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('codex', 'skill'), inventory: [{ version: 1, format: 'markdown', selector: '$' }], content, hash: sha256(content), isJson: false });
+        outputs.push({ pack: skill.pack, target: 'codex', kind: 'skill', id: skill.id, source: skill.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('codex', 'skill'), inventory: [{ version: 1, format: 'markdown', selector: '$' }], content, hash: sha256(content), isJson: false });
         for (const asset of skill.assets) {
           const relPath = skillAssetTargetPath('codex', skill.id, asset);
-          outputs.push({ pack: 'project', target: 'codex', kind: 'skill', id: skill.id, source: asset.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('codex', 'skill'), inventory: [{ version: 1, format: 'file', selector: '$' }], sourceFile: asset.source.absPath, hash: asset.hash, isJson: false });
+          outputs.push({ pack: asset.pack, target: 'codex', kind: 'skill', id: skill.id, source: asset.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('codex', 'skill'), inventory: [{ version: 1, format: 'file', selector: '$' }], sourceFile: asset.source.absPath, hash: asset.hash, isJson: false });
         }
       }
 
@@ -183,28 +183,30 @@ function codexAdapter(): TargetAdapter {
         const content = `${lines.join('\n').trimEnd()}\n`;
         for (const mcp of config.mcps) {
           const relPath = '.codex/config.toml';
-          outputs.push({ pack: 'project', target: 'codex', kind: 'mcp', id: mcp.id, source: mcp.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('codex', 'mcp'), inventory: [{ version: 1, format: 'toml', selector: `mcp_servers.${mcp.id}` }], content, hash: sha256(content), isJson: false });
+          outputs.push({ pack: mcp.pack, target: 'codex', kind: 'mcp', id: mcp.id, source: mcp.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('codex', 'mcp'), inventory: [{ version: 1, format: 'toml', selector: `mcp_servers.${mcp.id}` }], content, hash: sha256(content), isJson: false });
         }
       }
 
       if (config.rules.length > 0) {
         const bySource = new Map<string, typeof config.rules>();
         for (const rule of config.rules) {
-          const existing = bySource.get(rule.source.relPath) ?? [];
+          const key = `${rule.pack}::${rule.source.relPath}`;
+          const existing = bySource.get(key) ?? [];
           existing.push(rule);
-          bySource.set(rule.source.relPath, existing);
+          bySource.set(key, existing);
         }
-        for (const [source, sourceRules] of [...bySource.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+        for (const [sourceKey, sourceRules] of [...bySource.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
           const lines = [RAC_MARKER];
           for (const rule of [...sourceRules].sort((a, b) => a.id.localeCompare(b.id))) {
             const tool = rule.tools[0];
             lines.push(`prefix_rule(${JSON.stringify(tool.pattern)}, ${JSON.stringify(tool.decision)}, ${JSON.stringify(tool.justification)}, ${tool.appendWildcard ? 'true' : 'false'})`);
           }
           const content = `${lines.join('\n')}\n`;
-          const sourceBase = path.basename(source, path.extname(source));
-          const relPath = `.codex/rules/${sourceBase}.rules`;
+          const [packId, source] = sourceKey.split('::', 2);
+          const sourceFile = path.basename(source);
+          const relPath = `.codex/rules/${packId}/${sourceFile}.rules`;
           for (const rule of sourceRules) {
-            outputs.push({ pack: 'project', target: 'codex', kind: 'rule', id: rule.id, source: rule.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('codex', 'rule'), inventory: [{ version: 1, format: 'file', selector: '$' }], content, hash: sha256(content), isJson: false });
+            outputs.push({ pack: rule.pack, target: 'codex', kind: 'rule', id: rule.id, source: rule.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('codex', 'rule'), inventory: [{ version: 1, format: 'file', selector: '$' }], content, hash: sha256(content), isJson: false });
           }
         }
       }
@@ -228,16 +230,16 @@ function opencodeAdapter(): TargetAdapter {
         );
         const content = textManagedPayload(frontmatter, agent.instructions);
         const relPath = `.opencode/agents/${agent.id}.md`;
-        outputs.push({ pack: 'project', target: 'opencode', kind: 'agent', id: agent.id, source: agent.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('opencode', 'agent'), inventory: [{ version: 1, format: 'markdown', selector: '$' }], content, hash: sha256(content), isJson: false });
+        outputs.push({ pack: agent.pack, target: 'opencode', kind: 'agent', id: agent.id, source: agent.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('opencode', 'agent'), inventory: [{ version: 1, format: 'markdown', selector: '$' }], content, hash: sha256(content), isJson: false });
       }
 
       for (const skill of config.skills) {
         const content = textManagedPayload(skill.opencodeFrontmatter ?? skill.frontmatter, skill.body);
         const relPath = `.opencode/skills/${skill.id}/SKILL.md`;
-        outputs.push({ pack: 'project', target: 'opencode', kind: 'skill', id: skill.id, source: skill.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('opencode', 'skill'), inventory: [{ version: 1, format: 'markdown', selector: '$' }], content, hash: sha256(content), isJson: false });
+        outputs.push({ pack: skill.pack, target: 'opencode', kind: 'skill', id: skill.id, source: skill.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('opencode', 'skill'), inventory: [{ version: 1, format: 'markdown', selector: '$' }], content, hash: sha256(content), isJson: false });
         for (const asset of skill.assets) {
           const relPath = skillAssetTargetPath('opencode', skill.id, asset);
-          outputs.push({ pack: 'project', target: 'opencode', kind: 'skill', id: skill.id, source: asset.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('opencode', 'skill'), inventory: [{ version: 1, format: 'file', selector: '$' }], sourceFile: asset.source.absPath, hash: asset.hash, isJson: false });
+          outputs.push({ pack: asset.pack, target: 'opencode', kind: 'skill', id: skill.id, source: asset.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('opencode', 'skill'), inventory: [{ version: 1, format: 'file', selector: '$' }], sourceFile: asset.source.absPath, hash: asset.hash, isJson: false });
         }
       }
 
@@ -272,11 +274,11 @@ function opencodeAdapter(): TargetAdapter {
         const content = `${JSON.stringify({ ...(config.mcps.length > 0 ? { mcp } : {}), ...(config.rules.length > 0 ? { permission: { bash } } : {}) }, null, 2)}\n`;
         for (const server of config.mcps) {
           const relPath = '.opencode/opencode.json';
-          outputs.push({ pack: 'project', target: 'opencode', kind: 'mcp', id: server.id, source: server.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('opencode', 'mcp'), inventory: [{ version: 1, format: 'json', selector: `$.mcp.${server.id}` }], content, hash: sha256(content), isJson: true });
+          outputs.push({ pack: server.pack, target: 'opencode', kind: 'mcp', id: server.id, source: server.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('opencode', 'mcp'), inventory: [{ version: 1, format: 'json', selector: `$.mcp.${server.id}` }], content, hash: sha256(content), isJson: true });
         }
         for (const rule of config.rules) {
           const relPath = '.opencode/opencode.json';
-          outputs.push({ pack: 'project', target: 'opencode', kind: 'rule', id: rule.id, source: rule.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('opencode', 'rule'), inventory: [{ version: 1, format: 'json', selector: '$.permission.bash' }], content, hash: sha256(content), isJson: true });
+          outputs.push({ pack: rule.pack, target: 'opencode', kind: 'rule', id: rule.id, source: rule.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('opencode', 'rule'), inventory: [{ version: 1, format: 'json', selector: '$.permission.bash' }], content, hash: sha256(content), isJson: true });
         }
       }
 

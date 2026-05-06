@@ -5,7 +5,7 @@ import { adapterFor, vendorManifestRelPath } from '../adapters/target-adapters.j
 
 import { buildRuntimeConfig } from './config-model.js';
 import { deleteManifest, loadManifest, saveManifest } from './manifest.js';
-import { loadAgents, loadMcps, loadRules, loadSkills } from './parsers.js';
+import { loadAgents, loadMcps, loadRules, loadSkills, resolvePacks } from './parsers.js';
 import type { InstallManifest, InstallOptions, InstallResult, Kind, ManifestRecord, Target } from './types.js';
 import { RAC_MARKER, FM_SENSITIVE_MARKER, sha256 } from './util.js';
 
@@ -26,12 +26,21 @@ async function exists(filePath: string): Promise<boolean> {
   }
 }
 
-function stableKey(record: Pick<ManifestRecord, 'target' | 'kind' | 'id' | 'relPath'>): string {
-  return `${record.target}:${record.kind}:${record.id}:${record.relPath}`;
+function stableKey(record: Pick<ManifestRecord, 'pack' | 'target' | 'kind' | 'id' | 'relPath'>): string {
+  return `${record.pack}:${record.target}:${record.kind}:${record.id}:${record.relPath}`;
 }
 
 function sortManifestRecords(records: ManifestRecord[]): ManifestRecord[] {
   return [...records].sort((a, b) => stableKey(a).localeCompare(stableKey(b)));
+}
+
+function assertNoCrossPackDuplicate(items: Array<{ id: string; pack: string }>, kind: string): void {
+  const owner = new Map<string, string>();
+  for (const item of items) {
+    const existing = owner.get(item.id);
+    if (existing && existing !== item.pack) throw new Error(`duplicate ${kind} id across packs: ${item.id} (${existing}, ${item.pack})`);
+    owner.set(item.id, item.pack);
+  }
 }
 
 async function canOverwrite(filePath: string, ownedRelPaths: Set<string>, relPath: string, force: boolean, isJson: boolean): Promise<boolean> {
@@ -80,6 +89,8 @@ export async function initProject(cwd: string, empty = false): Promise<void> {
   for (const dirName of ['agents', 'skills', 'mcps', 'rules']) {
     await mkdir(path.join(root, dirName), { recursive: true });
   }
+  const configPath = path.join(root, 'config.toml');
+  if (!(await exists(configPath))) await writeFile(configPath, '', 'utf8');
   if (empty) return;
 
   const reviewerToml = path.join(root, 'agents', 'reviewer.toml');
@@ -179,10 +190,21 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
     for (const record of manifest.records) ownedRelPaths.add(record.relPath);
   }
 
-  const parsedAgents = options.kinds.includes('agent') ? await loadAgents(root) : [];
-  const parsedSkills = options.kinds.includes('skill') ? await loadSkills(root) : [];
-  const parsedMcps = options.kinds.includes('mcp') ? await loadMcps(root) : [];
-  const parsedRules = options.kinds.includes('rule') ? await loadRules(root) : [];
+  const packs = await resolvePacks(options.cwd);
+  const parsedAgents = [] as Awaited<ReturnType<typeof loadAgents>>;
+  const parsedSkills = [] as Awaited<ReturnType<typeof loadSkills>>;
+  const parsedMcps = [] as Awaited<ReturnType<typeof loadMcps>>;
+  const parsedRules = [] as Awaited<ReturnType<typeof loadRules>>;
+  for (const pack of packs) {
+    if (options.kinds.includes('agent')) parsedAgents.push(...(await loadAgents(pack.root, pack.id)));
+    if (options.kinds.includes('skill')) parsedSkills.push(...(await loadSkills(pack.root, pack.id)));
+    if (options.kinds.includes('mcp')) parsedMcps.push(...(await loadMcps(pack.root, pack.id)));
+    if (options.kinds.includes('rule')) parsedRules.push(...(await loadRules(pack.root, pack.id)));
+  }
+  assertNoCrossPackDuplicate(parsedAgents, 'agent');
+  assertNoCrossPackDuplicate(parsedSkills, 'skill');
+  assertNoCrossPackDuplicate(parsedMcps, 'mcp');
+  assertNoCrossPackDuplicate(parsedRules, 'rule');
   const config = await buildRuntimeConfig({ root, agents: parsedAgents, skills: parsedSkills, mcps: parsedMcps, rules: parsedRules });
 
   const plan: PlannedWrite[] = [];
@@ -222,6 +244,14 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
     const existing = planByRelPath.get(write.relPath) ?? [];
     existing.push(write);
     planByRelPath.set(write.relPath, existing);
+  }
+  for (const [relPath, writes] of planByRelPath.entries()) {
+    if (writes.length <= 1) continue;
+    const byHash = new Set(writes.map((write) => write.hash));
+    if (byHash.size > 1) {
+      const details = writes.map((write) => `${write.target}:${write.kind}:${write.pack}:${write.id}`).join(', ');
+      throw new Error(`planned output collision at ${relPath}; generated contents differ across records: ${details}`);
+    }
   }
 
   const opencodeSharedWrites = planByRelPath.get('.opencode/opencode.json') ?? [];
@@ -433,11 +463,21 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
 
 export async function doctor(cwd: string, targets: ('claude' | 'codex' | 'opencode')[], kinds: ('agent' | 'skill' | 'mcp' | 'rule')[]): Promise<string[]> {
   const root = path.join(cwd, '.rac');
-
-  const parsedAgents = kinds.includes('agent') ? await loadAgents(root) : [];
-  const parsedSkills = kinds.includes('skill') ? await loadSkills(root) : [];
-  const parsedMcps = kinds.includes('mcp') ? await loadMcps(root) : [];
-  const parsedRules = kinds.includes('rule') ? await loadRules(root) : [];
+  const packs = await resolvePacks(cwd);
+  const parsedAgents = [] as Awaited<ReturnType<typeof loadAgents>>;
+  const parsedSkills = [] as Awaited<ReturnType<typeof loadSkills>>;
+  const parsedMcps = [] as Awaited<ReturnType<typeof loadMcps>>;
+  const parsedRules = [] as Awaited<ReturnType<typeof loadRules>>;
+  for (const pack of packs) {
+    if (kinds.includes('agent')) parsedAgents.push(...(await loadAgents(pack.root, pack.id)));
+    if (kinds.includes('skill')) parsedSkills.push(...(await loadSkills(pack.root, pack.id)));
+    if (kinds.includes('mcp')) parsedMcps.push(...(await loadMcps(pack.root, pack.id)));
+    if (kinds.includes('rule')) parsedRules.push(...(await loadRules(pack.root, pack.id)));
+  }
+  assertNoCrossPackDuplicate(parsedAgents, 'agent');
+  assertNoCrossPackDuplicate(parsedSkills, 'skill');
+  assertNoCrossPackDuplicate(parsedMcps, 'mcp');
+  assertNoCrossPackDuplicate(parsedRules, 'rule');
   const config = await buildRuntimeConfig({ root, agents: parsedAgents, skills: parsedSkills, mcps: parsedMcps, rules: parsedRules });
 
   const warnings: string[] = [];

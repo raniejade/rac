@@ -48,9 +48,14 @@ npx github:raniejade/rac install
     <id>.toml
   rules/
     <file>.toml
+  config.toml
 ```
 
 Definition rules:
+
+- `.rac/config.toml` is required.
+- Project mode may define top-level `[[packs]]` entries for shared packs.
+- Shared pack mode must keep `.rac/config.toml` present and must not define `[[packs]]`.
 
 - Agents: one file per agent in `.rac/agents/*.toml`.
 - Skills: each skill must be in `.rac/skills/<id>/SKILL.md`.
@@ -140,6 +145,20 @@ headers = { Authorization = "Bearer ${MCP_TOKEN}" }
 - `startup_timeout_ms` is supported in source and is emitted for Codex as `startup_timeout_sec`.
 - Use `vendor.<target>.config` for target-specific MCP fields.
 - Avoid nested object values in `vendor.codex.config`; Codex TOML output supports scalar and array pass-through values.
+
+Project pack entry schema:
+
+```toml
+[[packs]]
+id = "platform-rules"
+repo = "github:owner/repo"
+ref = "main"
+```
+
+- `id` must match ASCII path-safe `A-Z a-z 0-9 . _ -`.
+- `repo` must use `github:owner/repo`.
+- `ref` is required.
+- RAC resolves shared packs with system `git` into cache (`$RAC_CACHE_DIR` or `~/.cache/rac`), then checks out `--detach <ref>`.
 
 ## Command Reference
 

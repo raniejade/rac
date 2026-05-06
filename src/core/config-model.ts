@@ -102,8 +102,8 @@ export type BuildRuntimeConfigInput = {
   rules: RuleDef[];
 };
 
-function sourceInfo(root: string, absPath: string): SourceInfo {
-  return { pack: 'project', absPath, relPath: rel(root, absPath) };
+function sourceInfo(pack: Pack, root: string, absPath: string): SourceInfo {
+  return { pack, absPath, relPath: rel(root, absPath) };
 }
 
 function stripVendor(frontmatter: Record<string, unknown>): Record<string, unknown> {
@@ -174,7 +174,7 @@ export async function buildRuntimeConfig(input: BuildRuntimeConfigInput): Promis
       description: agent.description,
       instructions,
       tools: agent.tools ?? [],
-      source: sourceInfo(input.root, agent.sourcePath),
+      source: sourceInfo(agent.pack, agent.packRoot, agent.sourcePath),
       vendor: {
         raw: agent.vendor,
         codexEmitInstructionOnly,
@@ -212,7 +212,7 @@ export async function buildRuntimeConfig(input: BuildRuntimeConfigInput): Promis
       return {
         pack: skill.pack,
         relativePath: assetRelativePath,
-        source: sourceInfo(input.root, sourceFile),
+        source: sourceInfo(skill.pack, skill.packRoot, sourceFile),
         hash: hashBuffer(content)
       };
     }));
@@ -222,7 +222,7 @@ export async function buildRuntimeConfig(input: BuildRuntimeConfigInput): Promis
       id: skill.id,
       description: skill.description,
       body: skill.body,
-      source: sourceInfo(input.root, skill.sourcePath),
+      source: sourceInfo(skill.pack, skill.packRoot, skill.sourcePath),
       frontmatter: baseFrontmatter,
       claudeFrontmatter: (claudeConfig || claudeFrontmatter) ? { ...baseFrontmatter, ...(claudeConfig ?? {}), ...(claudeFrontmatter ?? {}) } : undefined,
       codexFrontmatter: (codexConfig || codexFrontmatter) ? { ...baseFrontmatter, ...(codexConfig ?? {}), ...(codexFrontmatter ?? {}) } : undefined,
@@ -235,7 +235,7 @@ export async function buildRuntimeConfig(input: BuildRuntimeConfigInput): Promis
   const mcps = input.mcps.map((mcp): McpConfig => ({
     pack: mcp.pack,
     id: mcp.id,
-    source: sourceInfo(input.root, mcp.sourcePath),
+    source: sourceInfo(mcp.pack, mcp.packRoot, mcp.sourcePath),
     envRefs: mcp.envVars,
     startupTimeoutMs: mcp.startup_timeout_ms,
     vendorConfig: {
@@ -251,7 +251,7 @@ export async function buildRuntimeConfig(input: BuildRuntimeConfigInput): Promis
   const rules: RuleConfig[] = input.rules.map((rule) => ({
     pack: rule.pack,
     id: rule.id,
-    source: sourceInfo(input.root, rule.sourcePath),
+    source: sourceInfo(rule.pack, rule.packRoot, rule.sourcePath),
     tools: [{
       decision: rule.decision,
       justification: rule.justification,
