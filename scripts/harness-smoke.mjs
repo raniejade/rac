@@ -9,7 +9,7 @@ import { spawn } from 'node:child_process';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
 const cliPath = path.join(repoRoot, 'dist', 'cli.js');
-const keepTemp = process.env.AIRC_HARNESS_KEEP === '1';
+const keepTemp = process.env.RAC_HARNESS_KEEP === '1';
 
 async function runCli(cwd, args) {
   return await new Promise((resolve, reject) => {
@@ -27,7 +27,7 @@ async function runCli(cwd, args) {
         resolve({ stdout, stderr });
         return;
       }
-      reject(new Error(`airc ${args.join(' ')} failed with code ${code}\nstdout:\n${stdout}\nstderr:\n${stderr}`));
+      reject(new Error(`rac ${args.join(' ')} failed with code ${code}\nstdout:\n${stdout}\nstderr:\n${stderr}`));
     });
   });
 }
@@ -49,7 +49,7 @@ async function main() {
     process.exit(1);
   }
 
-  const tmpRoot = await mkdtemp(path.join(os.tmpdir(), 'airc-harness-'));
+  const tmpRoot = await mkdtemp(path.join(os.tmpdir(), 'rac-harness-'));
   const sampleRepo = path.join(tmpRoot, 'sample-repo');
 
   try {
@@ -57,7 +57,7 @@ async function main() {
 
     await runCli(sampleRepo, ['init']);
     await writeFile(
-      path.join(sampleRepo, '.airc', 'agents', 'reviewer.toml'),
+      path.join(sampleRepo, '.rac', 'agents', 'reviewer.toml'),
       'id = "reviewer"\nname = "Reviewer"\ndescription = "Checks project rules and required gates"\ninstructions = "./reviewer.instructions.md"\n[vendor.codex.config]\nmodel = "gpt-5"\nmodel_reasoning_effort = "high"\nsandbox_mode = "workspace-write"\n',
       'utf8'
     );
@@ -66,13 +66,13 @@ async function main() {
     await runCli(sampleRepo, ['install', '--target', 'claude,opencode']);
     await runCli(sampleRepo, ['install', '--check']);
 
-    await expectExists(path.join(sampleRepo, '.airc', 'agents', 'reviewer.toml'));
-    await expectExists(path.join(sampleRepo, '.airc', 'skills', 'project-gates', 'SKILL.md'));
-    await expectExists(path.join(sampleRepo, '.airc', 'mcps', 'project-rules.toml'));
-    await expectExists(path.join(sampleRepo, '.codex', '.airc-install-manifest.json'));
-    await expectExists(path.join(sampleRepo, '.agents', '.airc-install-manifest.json'));
-    await expectExists(path.join(sampleRepo, '.claude', '.airc-install-manifest.json'));
-    await expectExists(path.join(sampleRepo, '.opencode', '.airc-install-manifest.json'));
+    await expectExists(path.join(sampleRepo, '.rac', 'agents', 'reviewer.toml'));
+    await expectExists(path.join(sampleRepo, '.rac', 'skills', 'project-gates', 'SKILL.md'));
+    await expectExists(path.join(sampleRepo, '.rac', 'mcps', 'project-rules.toml'));
+    await expectExists(path.join(sampleRepo, '.codex', '.rac-install-manifest.json'));
+    await expectExists(path.join(sampleRepo, '.agents', '.rac-install-manifest.json'));
+    await expectExists(path.join(sampleRepo, '.claude', '.rac-install-manifest.json'));
+    await expectExists(path.join(sampleRepo, '.opencode', '.rac-install-manifest.json'));
 
     await expectExists(path.join(sampleRepo, '.codex', 'agents', 'reviewer.toml'));
     await expectExists(path.join(sampleRepo, '.agents', 'skills', 'project-gates', 'SKILL.md'));

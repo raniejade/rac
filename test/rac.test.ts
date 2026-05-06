@@ -13,7 +13,7 @@ import { loadAgents, loadMcps, loadSkills } from '../src/core/parsers.js';
 const tempDirs: string[] = [];
 
 async function makeTmp(): Promise<string> {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'airc-'));
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'rac-'));
   tempDirs.push(dir);
   return dir;
 }
@@ -25,52 +25,52 @@ afterEach(async () => {
 });
 
 async function seed(root: string): Promise<void> {
-  await mkdir(path.join(root, '.airc/agents'), { recursive: true });
-  await mkdir(path.join(root, '.airc/skills/project-gates'), { recursive: true });
-  await mkdir(path.join(root, '.airc/mcps'), { recursive: true });
+  await mkdir(path.join(root, '.rac/agents'), { recursive: true });
+  await mkdir(path.join(root, '.rac/skills/project-gates'), { recursive: true });
+  await mkdir(path.join(root, '.rac/mcps'), { recursive: true });
 
-  await writeFile(path.join(root, '.airc/agents/reviewer.toml'), 'id = "reviewer"\ninstructions = "./reviewer.md"\n[vendor.codex]\nemit = "instruction-only"\n[vendor.opencode]\ntools = ["legacy"]\n', 'utf8');
-  await writeFile(path.join(root, '.airc/agents/reviewer.md'), 'Review this project.\n', 'utf8');
+  await writeFile(path.join(root, '.rac/agents/reviewer.toml'), 'id = "reviewer"\ninstructions = "./reviewer.md"\n[vendor.codex]\nemit = "instruction-only"\n[vendor.opencode]\ntools = ["legacy"]\n', 'utf8');
+  await writeFile(path.join(root, '.rac/agents/reviewer.md'), 'Review this project.\n', 'utf8');
 
-  await writeFile(path.join(root, '.airc/skills/project-gates/SKILL.md'), '+++\ndescription = "project checks"\nassets = ["checklist.md"]\n[vendor.claude.frontmatter]\naudience = "claude"\n[vendor.codex.frontmatter]\naudience = "codex"\n[vendor.opencode.frontmatter]\naudience = "opencode"\n+++\nRun checks\n', 'utf8');
-  await writeFile(path.join(root, '.airc/skills/project-gates/checklist.md'), '- test\n', 'utf8');
+  await writeFile(path.join(root, '.rac/skills/project-gates/SKILL.md'), '+++\ndescription = "project checks"\nassets = ["checklist.md"]\n[vendor.claude.frontmatter]\naudience = "claude"\n[vendor.codex.frontmatter]\naudience = "codex"\n[vendor.opencode.frontmatter]\naudience = "opencode"\n+++\nRun checks\n', 'utf8');
+  await writeFile(path.join(root, '.rac/skills/project-gates/checklist.md'), '- test\n', 'utf8');
 
-  await writeFile(path.join(root, '.airc/mcps/project-rules.toml'), 'id = "project-rules"\ncommand = "node"\nargs = ["./mcp.js", "${PROJECT_RULES_TOKEN}"]\nstartup_timeout_ms = 1200\n', 'utf8');
+  await writeFile(path.join(root, '.rac/mcps/project-rules.toml'), 'id = "project-rules"\ncommand = "node"\nargs = ["./mcp.js", "${PROJECT_RULES_TOKEN}"]\nstartup_timeout_ms = 1200\n', 'utf8');
 }
 
 describe('parsers', () => {
   it('agent parser validates TOML and duplicate ids', async () => {
     const root = await makeTmp();
-    await mkdir(path.join(root, '.airc/agents'), { recursive: true });
-    await writeFile(path.join(root, '.airc/agents/a.toml'), 'id = "x"\ninstructions = "hello"\n', 'utf8');
-    await writeFile(path.join(root, '.airc/agents/b.toml'), 'id = "x"\ninstructions = "hello"\n', 'utf8');
-    await expect(loadAgents(path.join(root, '.airc'))).rejects.toThrow('duplicate agent id');
+    await mkdir(path.join(root, '.rac/agents'), { recursive: true });
+    await writeFile(path.join(root, '.rac/agents/a.toml'), 'id = "x"\ninstructions = "hello"\n', 'utf8');
+    await writeFile(path.join(root, '.rac/agents/b.toml'), 'id = "x"\ninstructions = "hello"\n', 'utf8');
+    await expect(loadAgents(path.join(root, '.rac'))).rejects.toThrow('duplicate agent id');
 
-    await writeFile(path.join(root, '.airc/agents/b.toml'), 'id = "y"\ninstructions = [broken\n', 'utf8');
-    await expect(loadAgents(path.join(root, '.airc'))).rejects.toThrow('invalid TOML');
+    await writeFile(path.join(root, '.rac/agents/b.toml'), 'id = "y"\ninstructions = [broken\n', 'utf8');
+    await expect(loadAgents(path.join(root, '.rac'))).rejects.toThrow('invalid TOML');
   });
 
   it('skill parser requires +++ at byte 0 and closing delimiter', async () => {
     const root = await makeTmp();
-    await mkdir(path.join(root, '.airc/skills/s1'), { recursive: true });
-    await writeFile(path.join(root, '.airc/skills/s1/SKILL.md'), 'bad\n+++\ndescription = "x"\n+++\nbody\n', 'utf8');
-    await expect(loadSkills(path.join(root, '.airc'))).rejects.toThrow('byte 0');
+    await mkdir(path.join(root, '.rac/skills/s1'), { recursive: true });
+    await writeFile(path.join(root, '.rac/skills/s1/SKILL.md'), 'bad\n+++\ndescription = "x"\n+++\nbody\n', 'utf8');
+    await expect(loadSkills(path.join(root, '.rac'))).rejects.toThrow('byte 0');
 
-    await writeFile(path.join(root, '.airc/skills/s1/SKILL.md'), '+++\ndescription = "x"\nbody\n', 'utf8');
-    await expect(loadSkills(path.join(root, '.airc'))).rejects.toThrow('missing closing +++ delimiter');
+    await writeFile(path.join(root, '.rac/skills/s1/SKILL.md'), '+++\ndescription = "x"\nbody\n', 'utf8');
+    await expect(loadSkills(path.join(root, '.rac'))).rejects.toThrow('missing closing +++ delimiter');
   });
 
   it('mcp parser enforces local xor remote and collects env vars', async () => {
     const root = await makeTmp();
-    await mkdir(path.join(root, '.airc/mcps'), { recursive: true });
-    await writeFile(path.join(root, '.airc/mcps/a.toml'), 'id = "a"\n', 'utf8');
-    await expect(loadMcps(path.join(root, '.airc'))).rejects.toThrow('local command OR remote type+url');
+    await mkdir(path.join(root, '.rac/mcps'), { recursive: true });
+    await writeFile(path.join(root, '.rac/mcps/a.toml'), 'id = "a"\n', 'utf8');
+    await expect(loadMcps(path.join(root, '.rac'))).rejects.toThrow('local command OR remote type+url');
 
-    await writeFile(path.join(root, '.airc/mcps/a.toml'), 'id = "a"\ncommand = "node"\nargs = ["${X}"]\ntype = "remote"\nurl = "https://x"\n', 'utf8');
-    await expect(loadMcps(path.join(root, '.airc'))).rejects.toThrow('cannot define both local and remote transport');
+    await writeFile(path.join(root, '.rac/mcps/a.toml'), 'id = "a"\ncommand = "node"\nargs = ["${X}"]\ntype = "remote"\nurl = "https://x"\n', 'utf8');
+    await expect(loadMcps(path.join(root, '.rac'))).rejects.toThrow('cannot define both local and remote transport');
 
-    await writeFile(path.join(root, '.airc/mcps/a.toml'), 'id = "a"\ncommand = "node"\nargs = ["${X}", "${Y}"]\n', 'utf8');
-    const parsed = await loadMcps(path.join(root, '.airc'));
+    await writeFile(path.join(root, '.rac/mcps/a.toml'), 'id = "a"\ncommand = "node"\nargs = ["${X}", "${Y}"]\n', 'utf8');
+    const parsed = await loadMcps(path.join(root, '.rac'));
     expect(parsed[0].envVars).toEqual(['X', 'Y']);
   });
 });
@@ -79,7 +79,7 @@ describe('runtime config + adapters', () => {
   it('resolves relative agent instructions and skill assets in runtime config', async () => {
     const root = await makeTmp();
     await seed(root);
-    const sourceRoot = path.join(root, '.airc');
+    const sourceRoot = path.join(root, '.rac');
     const config = await buildRuntimeConfig({
       root: sourceRoot,
       agents: await loadAgents(sourceRoot),
@@ -95,7 +95,7 @@ describe('runtime config + adapters', () => {
   it('adapters consume same runtime config and output vendor-specific files', async () => {
     const root = await makeTmp();
     await seed(root);
-    const sourceRoot = path.join(root, '.airc');
+    const sourceRoot = path.join(root, '.rac');
     const config = await buildRuntimeConfig({
       root: sourceRoot,
       agents: await loadAgents(sourceRoot),
@@ -115,7 +115,7 @@ describe('runtime config + adapters', () => {
   it('preserves skill frontmatter semantics across codex/opencode/claude adapters', async () => {
     const root = await makeTmp();
     await seed(root);
-    const sourceRoot = path.join(root, '.airc');
+    const sourceRoot = path.join(root, '.rac');
     const config = await buildRuntimeConfig({
       root: sourceRoot,
       agents: await loadAgents(sourceRoot),
@@ -160,7 +160,7 @@ describe('install + doctor', () => {
     await expect(initProject(root, false)).rejects.toThrow('refusing to overwrite existing init examples');
 
     await seed(root);
-    await writeFile(path.join(root, '.airc/skills/project-gates/extra.txt'), 'ignored', 'utf8');
+    await writeFile(path.join(root, '.rac/skills/project-gates/extra.txt'), 'ignored', 'utf8');
     await install({ cwd: root, targets: ['claude'], kinds: ['skill'] });
 
     await expect(stat(path.join(root, '.claude/skills/project-gates/checklist.md'))).resolves.toBeTruthy();
@@ -169,14 +169,14 @@ describe('install + doctor', () => {
 
   it('rejects traversal from agent instructions and skill assets', async () => {
     const root = await makeTmp();
-    await mkdir(path.join(root, '.airc/agents'), { recursive: true });
-    await mkdir(path.join(root, '.airc/skills/s1'), { recursive: true });
+    await mkdir(path.join(root, '.rac/agents'), { recursive: true });
+    await mkdir(path.join(root, '.rac/skills/s1'), { recursive: true });
 
-    await writeFile(path.join(root, '.airc/agents/a.toml'), 'id = "a"\ninstructions = "../../etc/passwd"\n', 'utf8');
+    await writeFile(path.join(root, '.rac/agents/a.toml'), 'id = "a"\ninstructions = "../../etc/passwd"\n', 'utf8');
     await expect(install({ cwd: root, targets: ['codex'], kinds: ['agent'] })).rejects.toThrow('agent instructions traversal rejected');
 
-    await writeFile(path.join(root, '.airc/agents/a.toml'), 'id = "a"\ninstructions = "inline"\n', 'utf8');
-    await writeFile(path.join(root, '.airc/skills/s1/SKILL.md'), '+++\ndescription = "d"\nassets = ["../bad.txt"]\n+++\nbody\n', 'utf8');
+    await writeFile(path.join(root, '.rac/agents/a.toml'), 'id = "a"\ninstructions = "inline"\n', 'utf8');
+    await writeFile(path.join(root, '.rac/skills/s1/SKILL.md'), '+++\ndescription = "d"\nassets = ["../bad.txt"]\n+++\nbody\n', 'utf8');
     await expect(install({ cwd: root, targets: ['codex'], kinds: ['skill'] })).rejects.toThrow('skill asset traversal rejected');
   });
 
@@ -189,10 +189,10 @@ describe('install + doctor', () => {
     await expect(install({ cwd: root, targets: ['opencode'], kinds: ['mcp'] })).rejects.toThrow('refusing overwrite unmanaged file');
     await expect(install({ cwd: root, targets: ['opencode'], kinds: ['mcp'], dryRun: true })).rejects.toThrow('refusing overwrite unmanaged file');
 
-    const beforeManifestMissing = stat(path.join(root, '.codex/.airc-install-manifest.json'));
+    const beforeManifestMissing = stat(path.join(root, '.codex/.rac-install-manifest.json'));
     await expect(beforeManifestMissing).rejects.toThrow();
     await install({ cwd: root, targets: ['codex'], kinds: ['agent'], dryRun: true });
-    await expect(stat(path.join(root, '.codex/.airc-install-manifest.json'))).rejects.toThrow();
+    await expect(stat(path.join(root, '.codex/.rac-install-manifest.json'))).rejects.toThrow();
 
     await expect(install({ cwd: root, targets: ['opencode'], kinds: ['mcp'], force: true })).resolves.toBeTruthy();
   });
@@ -202,7 +202,7 @@ describe('install + doctor', () => {
     await seed(root);
 
     await install({ cwd: root, targets: ['codex'], kinds: ['agent'] });
-    await rm(path.join(root, '.airc/agents/reviewer.toml'));
+    await rm(path.join(root, '.rac/agents/reviewer.toml'));
     await mkdir(path.join(root, '.codex/agents'), { recursive: true });
     await writeFile(path.join(root, '.codex/agents/keep.md'), 'keep', 'utf8');
 
@@ -214,8 +214,8 @@ describe('install + doctor', () => {
   it('aggregates multiple MCP definitions into one shared target config write', async () => {
     const root = await makeTmp();
     await seed(root);
-    await writeFile(path.join(root, '.airc/mcps/z-remote.toml'), 'id = "z-remote"\ntype = "sse"\nurl = "https://example.test/z"\n', 'utf8');
-    await writeFile(path.join(root, '.airc/mcps/a-remote.toml'), 'id = "a-remote"\ntype = "sse"\nurl = "https://example.test/a"\n', 'utf8');
+    await writeFile(path.join(root, '.rac/mcps/z-remote.toml'), 'id = "z-remote"\ntype = "sse"\nurl = "https://example.test/z"\n', 'utf8');
+    await writeFile(path.join(root, '.rac/mcps/a-remote.toml'), 'id = "a-remote"\ntype = "sse"\nurl = "https://example.test/a"\n', 'utf8');
 
     await install({ cwd: root, targets: ['claude', 'codex', 'opencode'], kinds: ['mcp'] });
 
@@ -235,7 +235,7 @@ describe('install + doctor', () => {
   it('vendor compatibility schema: OpenCode MCP emits local/remote typed entries and rejects legacy command object shape', async () => {
     const root = await makeTmp();
     await seed(root);
-    await writeFile(path.join(root, '.airc/mcps/a-remote.toml'), 'id = "a-remote"\ntype = "sse"\nurl = "https://example.test/a"\n', 'utf8');
+    await writeFile(path.join(root, '.rac/mcps/a-remote.toml'), 'id = "a-remote"\ntype = "sse"\nurl = "https://example.test/a"\n', 'utf8');
 
     await install({ cwd: root, targets: ['opencode'], kinds: ['mcp'] });
 
@@ -274,10 +274,10 @@ describe('install + doctor', () => {
   it('clean keeps shared MCP config path when still used by current MCP set', async () => {
     const root = await makeTmp();
     await seed(root);
-    await writeFile(path.join(root, '.airc/mcps/remote.toml'), 'id = "remote"\ntype = "sse"\nurl = "https://example.test/mcp"\n', 'utf8');
+    await writeFile(path.join(root, '.rac/mcps/remote.toml'), 'id = "remote"\ntype = "sse"\nurl = "https://example.test/mcp"\n', 'utf8');
     await install({ cwd: root, targets: ['claude'], kinds: ['mcp'] });
 
-    await rm(path.join(root, '.airc/mcps/remote.toml'));
+    await rm(path.join(root, '.rac/mcps/remote.toml'));
     const result = await install({ cwd: root, targets: ['claude'], kinds: ['mcp'], clean: true });
     expect(result.del).not.toContain(path.join(root, '.mcp.json'));
 
@@ -290,11 +290,11 @@ describe('install + doctor', () => {
     await seed(root);
     await install({ cwd: root, targets: ['claude', 'codex', 'opencode'], kinds: ['agent', 'skill', 'mcp'] });
 
-    await expect(stat(path.join(root, '.claude/.airc-install-manifest.json'))).resolves.toBeTruthy();
-    await expect(stat(path.join(root, '.codex/.airc-install-manifest.json'))).resolves.toBeTruthy();
-    await expect(stat(path.join(root, '.agents/.airc-install-manifest.json'))).resolves.toBeTruthy();
-    await expect(stat(path.join(root, '.opencode/.airc-install-manifest.json'))).resolves.toBeTruthy();
-    await expect(stat(path.join(root, '.airc/.install-manifest.json'))).rejects.toThrow();
+    await expect(stat(path.join(root, '.claude/.rac-install-manifest.json'))).resolves.toBeTruthy();
+    await expect(stat(path.join(root, '.codex/.rac-install-manifest.json'))).resolves.toBeTruthy();
+    await expect(stat(path.join(root, '.agents/.rac-install-manifest.json'))).resolves.toBeTruthy();
+    await expect(stat(path.join(root, '.opencode/.rac-install-manifest.json'))).resolves.toBeTruthy();
+    await expect(stat(path.join(root, '.rac/.install-manifest.json'))).rejects.toThrow();
   });
 
   it('codex uses separate manifests for .codex outputs and .agents skills', async () => {
@@ -302,10 +302,10 @@ describe('install + doctor', () => {
     await seed(root);
     await install({ cwd: root, targets: ['codex'], kinds: ['agent', 'skill', 'mcp'] });
 
-    const codexManifest = JSON.parse(await readFile(path.join(root, '.codex/.airc-install-manifest.json'), 'utf8')) as {
+    const codexManifest = JSON.parse(await readFile(path.join(root, '.codex/.rac-install-manifest.json'), 'utf8')) as {
       records: Array<{ kind: string; relPath: string }>;
     };
-    const agentsManifest = JSON.parse(await readFile(path.join(root, '.agents/.airc-install-manifest.json'), 'utf8')) as {
+    const agentsManifest = JSON.parse(await readFile(path.join(root, '.agents/.rac-install-manifest.json'), 'utf8')) as {
       records: Array<{ kind: string; relPath: string }>;
     };
 
@@ -320,7 +320,7 @@ describe('install + doctor', () => {
     await seed(root);
     await install({ cwd: root, targets: ['claude'], kinds: ['mcp'] });
 
-    const manifest = JSON.parse(await readFile(path.join(root, '.claude/.airc-install-manifest.json'), 'utf8')) as {
+    const manifest = JSON.parse(await readFile(path.join(root, '.claude/.rac-install-manifest.json'), 'utf8')) as {
       records: Array<{ kind: string; relPath: string }>;
     };
     expect(manifest.records.every((record) => record.kind === 'mcp')).toBe(true);
@@ -333,7 +333,7 @@ describe('install + doctor', () => {
     await seed(root);
     await install({ cwd: root, targets: ['codex'], kinds: ['agent'] });
 
-    const manifest = JSON.parse(await readFile(path.join(root, '.codex/.airc-install-manifest.json'), 'utf8')) as {
+    const manifest = JSON.parse(await readFile(path.join(root, '.codex/.rac-install-manifest.json'), 'utf8')) as {
       records: Array<Record<string, unknown>>;
     };
     expect(manifest.records.length).toBeGreaterThan(0);
@@ -351,13 +351,13 @@ describe('install + doctor', () => {
     await seed(root);
     await install({ cwd: root, targets: ['claude', 'codex', 'opencode'], kinds: ['mcp'] });
 
-    const claudeManifest = JSON.parse(await readFile(path.join(root, '.claude/.airc-install-manifest.json'), 'utf8')) as {
+    const claudeManifest = JSON.parse(await readFile(path.join(root, '.claude/.rac-install-manifest.json'), 'utf8')) as {
       records: Array<{ id: string; inventory: Array<{ selector: string }> }>;
     };
-    const codexManifest = JSON.parse(await readFile(path.join(root, '.codex/.airc-install-manifest.json'), 'utf8')) as {
+    const codexManifest = JSON.parse(await readFile(path.join(root, '.codex/.rac-install-manifest.json'), 'utf8')) as {
       records: Array<{ id: string; inventory: Array<{ selector: string }> }>;
     };
-    const opencodeManifest = JSON.parse(await readFile(path.join(root, '.opencode/.airc-install-manifest.json'), 'utf8')) as {
+    const opencodeManifest = JSON.parse(await readFile(path.join(root, '.opencode/.rac-install-manifest.json'), 'utf8')) as {
       records: Array<{ id: string; inventory: Array<{ selector: string }> }>;
     };
 
@@ -371,11 +371,11 @@ describe('install + doctor', () => {
     await seed(root);
     await install({ cwd: root, targets: ['claude', 'codex', 'opencode'], kinds: ['agent', 'skill', 'mcp'], dryRun: true });
 
-    await expect(stat(path.join(root, '.claude/.airc-install-manifest.json'))).rejects.toThrow();
-    await expect(stat(path.join(root, '.codex/.airc-install-manifest.json'))).rejects.toThrow();
-    await expect(stat(path.join(root, '.agents/.airc-install-manifest.json'))).rejects.toThrow();
-    await expect(stat(path.join(root, '.opencode/.airc-install-manifest.json'))).rejects.toThrow();
-    await expect(stat(path.join(root, '.airc/.install-manifest.json'))).rejects.toThrow();
+    await expect(stat(path.join(root, '.claude/.rac-install-manifest.json'))).rejects.toThrow();
+    await expect(stat(path.join(root, '.codex/.rac-install-manifest.json'))).rejects.toThrow();
+    await expect(stat(path.join(root, '.agents/.rac-install-manifest.json'))).rejects.toThrow();
+    await expect(stat(path.join(root, '.opencode/.rac-install-manifest.json'))).rejects.toThrow();
+    await expect(stat(path.join(root, '.rac/.install-manifest.json'))).rejects.toThrow();
   });
 
   it('install --check passes after install and fails when generated outputs drift', async () => {
@@ -396,8 +396,8 @@ describe('install + doctor', () => {
     const root = await makeTmp();
     await seed(root);
     await install({ cwd: root, targets: ['codex'], kinds: ['agent'] });
-    await rm(path.join(root, '.airc/agents/reviewer.toml'));
-    await rm(path.join(root, '.airc/agents/reviewer.md'));
+    await rm(path.join(root, '.rac/agents/reviewer.toml'));
+    await rm(path.join(root, '.rac/agents/reviewer.md'));
 
     await expect(install({ cwd: root, targets: ['codex'], kinds: ['agent'], check: true })).rejects.toThrow('stale managed output requires cleanup');
     await expect(stat(path.join(root, '.codex/agents/reviewer.md'))).resolves.toBeTruthy();
@@ -405,13 +405,13 @@ describe('install + doctor', () => {
 
   it('vendor compatibility schema: Codex agent TOML emits name/description/developer_instructions and rejects id/instructions keys', async () => {
     const root = await makeTmp();
-    await mkdir(path.join(root, '.airc/agents'), { recursive: true });
-    await writeFile(path.join(root, '.airc/agents/reviewer.toml'), 'id = "reviewer"\ninstructions = "./reviewer.md"\n', 'utf8');
-    await writeFile(path.join(root, '.airc/agents/reviewer.md'), 'line "one"\nline two\n', 'utf8');
+    await mkdir(path.join(root, '.rac/agents'), { recursive: true });
+    await writeFile(path.join(root, '.rac/agents/reviewer.toml'), 'id = "reviewer"\ninstructions = "./reviewer.md"\n', 'utf8');
+    await writeFile(path.join(root, '.rac/agents/reviewer.md'), 'line "one"\nline two\n', 'utf8');
 
     await install({ cwd: root, targets: ['codex'], kinds: ['agent'] });
     const toml = await readFile(path.join(root, '.codex/agents/reviewer.toml'), 'utf8');
-    const parsed = parseToml(toml.replace(/^<!-- managed-by-airc -->\n/, '')) as Record<string, unknown>;
+    const parsed = parseToml(toml.replace(/^<!-- managed-by-rac -->\n/, '')) as Record<string, unknown>;
 
     expect(toml).toContain('name = "reviewer"');
     expect(toml).toContain('description = "reviewer"');
@@ -423,13 +423,13 @@ describe('install + doctor', () => {
 
   it('vendor pass-through: Codex agent TOML keeps model/model_reasoning_effort/sandbox_mode from vendor.codex.config', async () => {
     const root = await makeTmp();
-    await mkdir(path.join(root, '.airc/agents'), { recursive: true });
+    await mkdir(path.join(root, '.rac/agents'), { recursive: true });
     await writeFile(
-      path.join(root, '.airc/agents/reviewer.toml'),
+      path.join(root, '.rac/agents/reviewer.toml'),
       'id = "reviewer"\ninstructions = "./reviewer.md"\n[vendor.codex.config]\nmodel = "gpt-5"\nmodel_reasoning_effort = "high"\nsandbox_mode = "workspace-write"\n',
       'utf8'
     );
-    await writeFile(path.join(root, '.airc/agents/reviewer.md'), 'Review.\n', 'utf8');
+    await writeFile(path.join(root, '.rac/agents/reviewer.md'), 'Review.\n', 'utf8');
 
     await install({ cwd: root, targets: ['codex'], kinds: ['agent'] });
     const toml = await readFile(path.join(root, '.codex/agents/reviewer.toml'), 'utf8');
@@ -443,7 +443,7 @@ describe('install + doctor', () => {
     await seed(root);
 
     await install({ cwd: root, targets: ['codex'], kinds: ['skill'] });
-    const manifestPath = path.join(root, '.agents/.airc-install-manifest.json');
+    const manifestPath = path.join(root, '.agents/.rac-install-manifest.json');
     const manifestOne = JSON.parse(await readFile(manifestPath, 'utf8')) as {
       records: Array<{ relPath: string; hash: string; kind: string; inventory: Array<{ selector: string }> }>;
     };
@@ -462,11 +462,11 @@ describe('install + doctor', () => {
     await seed(root);
     await install({ cwd: root, targets: ['codex'], kinds: ['agent'] });
 
-    await rm(path.join(root, '.airc/agents/reviewer.toml'));
-    await rm(path.join(root, '.airc/agents/reviewer.md'));
+    await rm(path.join(root, '.rac/agents/reviewer.toml'));
+    await rm(path.join(root, '.rac/agents/reviewer.md'));
     await install({ cwd: root, targets: ['codex'], kinds: ['agent'], clean: true });
 
-    await expect(stat(path.join(root, '.codex/.airc-install-manifest.json'))).rejects.toThrow();
+    await expect(stat(path.join(root, '.codex/.rac-install-manifest.json'))).rejects.toThrow();
   });
 
   it('doctor emits expected warnings for env, codex instruction-only, opencode legacy tools', async () => {
@@ -481,9 +481,9 @@ describe('install + doctor', () => {
 
   it('vendor pass-through: MCP config supports vendor.<target>.config for claude/codex/opencode', async () => {
     const root = await makeTmp();
-    await mkdir(path.join(root, '.airc/mcps'), { recursive: true });
+    await mkdir(path.join(root, '.rac/mcps'), { recursive: true });
     await writeFile(
-      path.join(root, '.airc/mcps/server.toml'),
+      path.join(root, '.rac/mcps/server.toml'),
       'id = "server"\ncommand = "node"\nargs = ["./mcp.js"]\n[vendor.claude.config]\nnotes = "claude"\n[vendor.codex.config]\nenabled = true\n[vendor.opencode.config]\nreadOnly = true\n',
       'utf8'
     );
@@ -501,9 +501,9 @@ describe('install + doctor', () => {
 
   it('vendor pass-through: skill vendor.<target>.config overlays markdown frontmatter for claude/codex/opencode', async () => {
     const root = await makeTmp();
-    await mkdir(path.join(root, '.airc/skills/s1'), { recursive: true });
+    await mkdir(path.join(root, '.rac/skills/s1'), { recursive: true });
     await writeFile(
-      path.join(root, '.airc/skills/s1/SKILL.md'),
+      path.join(root, '.rac/skills/s1/SKILL.md'),
       '+++\ndescription = "skill"\n[vendor.claude.config]\naudience = "claude-config"\n[vendor.codex.config]\nmodel = "gpt-5"\n[vendor.opencode.config]\nenabled = true\n+++\nbody\n',
       'utf8'
     );
@@ -528,38 +528,38 @@ describe('install + doctor', () => {
 
   it('fails fast on vendor collision with generated keys and on instruction-only + codex config incompatibility', async () => {
     const root = await makeTmp();
-    await mkdir(path.join(root, '.airc/agents'), { recursive: true });
+    await mkdir(path.join(root, '.rac/agents'), { recursive: true });
     await writeFile(
-      path.join(root, '.airc/agents/reviewer.toml'),
+      path.join(root, '.rac/agents/reviewer.toml'),
       'id = "reviewer"\ninstructions = "inline"\n[vendor.codex.config]\nname = "nope"\n',
       'utf8'
     );
     await expect(install({ cwd: root, targets: ['codex'], kinds: ['agent'] })).rejects.toThrow('collides with generated key: name');
 
     await writeFile(
-      path.join(root, '.airc/agents/reviewer.toml'),
+      path.join(root, '.rac/agents/reviewer.toml'),
       'id = "reviewer"\ninstructions = "inline"\n[vendor.codex]\nemit = "instruction-only"\n[vendor.codex.config]\nmodel = "gpt-5"\n',
       'utf8'
     );
     await expect(install({ cwd: root, targets: ['codex'], kinds: ['agent'] })).rejects.toThrow('cannot combine vendor.codex.emit=instruction-only with vendor.codex.config');
 
-    await mkdir(path.join(root, '.airc/skills/s1'), { recursive: true });
+    await mkdir(path.join(root, '.rac/skills/s1'), { recursive: true });
     await writeFile(
-      path.join(root, '.airc/skills/s1/SKILL.md'),
+      path.join(root, '.rac/skills/s1/SKILL.md'),
       '+++\ndescription = "skill"\n[vendor.claude.frontmatter]\nname = "bad"\n+++\nbody\n',
       'utf8'
     );
     await expect(install({ cwd: root, targets: ['claude'], kinds: ['skill'] })).rejects.toThrow('vendor.claude.frontmatter collides with generated keys: name');
 
     await writeFile(
-      path.join(root, '.airc/skills/s1/SKILL.md'),
+      path.join(root, '.rac/skills/s1/SKILL.md'),
       '+++\ndescription = "skill"\n[vendor.codex.config]\nname = "bad"\n+++\nbody\n',
       'utf8'
     );
     await expect(install({ cwd: root, targets: ['codex'], kinds: ['skill'] })).rejects.toThrow('vendor.codex.config collides with generated keys: name');
 
     await writeFile(
-      path.join(root, '.airc/skills/s1/SKILL.md'),
+      path.join(root, '.rac/skills/s1/SKILL.md'),
       '+++\ndescription = "skill"\n[vendor.opencode.config]\naudience = "config"\n[vendor.opencode.frontmatter]\naudience = "frontmatter"\n+++\nbody\n',
       'utf8'
     );

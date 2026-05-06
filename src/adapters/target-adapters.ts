@@ -2,7 +2,7 @@ import path from 'node:path';
 
 import type { RuntimeConfig, SkillAssetConfig } from '../core/config-model.js';
 import type { Kind, ManagedInventoryEntry, Pack, Target } from '../core/types.js';
-import { AIRC_MARKER, sha256 } from '../core/util.js';
+import { RAC_MARKER, sha256 } from '../core/util.js';
 
 import { textManagedPayload } from './shared.js';
 
@@ -45,10 +45,10 @@ function toTomlValue(value: unknown): string {
 }
 
 export function vendorManifestRelPath(target: Target, kind: Kind): string {
-  if (target === 'claude') return '.claude/.airc-install-manifest.json';
-  if (target === 'opencode') return '.opencode/.airc-install-manifest.json';
-  if (kind === 'skill') return '.agents/.airc-install-manifest.json';
-  return '.codex/.airc-install-manifest.json';
+  if (target === 'claude') return '.claude/.rac-install-manifest.json';
+  if (target === 'opencode') return '.opencode/.rac-install-manifest.json';
+  if (kind === 'skill') return '.agents/.rac-install-manifest.json';
+  return '.codex/.rac-install-manifest.json';
 }
 
 function skillAssetTargetPath(target: Target, skillId: string, asset: SkillAssetConfig): string {
@@ -128,7 +128,7 @@ function codexAdapter(): TargetAdapter {
             developer_instructions: agent.instructions
           };
           const merged = mergeGeneratedWithVendor(generated, agent.vendor.codexConfig, `agent ${agent.id} vendor.codex.config`);
-          const lines = [AIRC_MARKER];
+          const lines = [RAC_MARKER];
           for (const [key, value] of Object.entries(merged)) lines.push(`${key} = ${toTomlValue(value)}`);
           const content = `${lines.join('\n')}\n`;
           const relPath = `.codex/agents/${agent.id}.toml`;
@@ -147,7 +147,7 @@ function codexAdapter(): TargetAdapter {
       }
 
       if (config.mcps.length > 0) {
-        const lines = [AIRC_MARKER];
+        const lines = [RAC_MARKER];
         for (const mcp of [...config.mcps].sort((a, b) => a.id.localeCompare(b.id))) {
           lines.push(`[mcp_servers.${mcp.id}]`);
           const generated: Record<string, unknown> = mcp.transport.kind === 'local'

@@ -1,9 +1,9 @@
 {
-  "name": "airc",
+  "name": "rac",
   "version": "0.1.0",
   "type": "module",
   "bin": {
-    "airc": "dist/cli.js"
+    "rac": "dist/cli.js"
   },
   "engines": {
     "node": ">=20"

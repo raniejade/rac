@@ -1,8 +1,8 @@
-# AIRC Architecture
+# RAC Architecture
 
 ## Pipeline (Current)
 
-AIRC is organized as a strict 4-stage flow:
+RAC is organized as a strict 4-stage flow:
 
 1. Parsed source files
 2. Common runtime representation
@@ -96,10 +96,10 @@ Responsibilities:
 - Write files (content or asset copy) exactly once per destination path
 - Optionally clean stale managed outputs
 - Persist vendor-local install manifests per target/kind:
-- `.claude/.airc-install-manifest.json` (claude agents/skills/mcp)
-- `.codex/.airc-install-manifest.json` (codex agents/mcp)
-- `.agents/.airc-install-manifest.json` (codex skills)
-- `.opencode/.airc-install-manifest.json` (opencode agents/skills/mcp)
+- `.claude/.rac-install-manifest.json` (claude agents/skills/mcp)
+- `.codex/.rac-install-manifest.json` (codex agents/mcp)
+- `.agents/.rac-install-manifest.json` (codex skills)
+- `.opencode/.rac-install-manifest.json` (opencode agents/skills/mcp)
 
 Safety model:
 

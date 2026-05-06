@@ -1,8 +1,8 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
 
-export const AIRC_MARKER = '<!-- managed-by-airc -->';
-export const FM_SENSITIVE_MARKER = '<!-- airc-frontmatter-sensitive -->';
+export const RAC_MARKER = '<!-- managed-by-rac -->';
+export const FM_SENSITIVE_MARKER = '<!-- rac-frontmatter-sensitive -->';
 
 export function sha256(content: string | Buffer): string {
   return crypto.createHash('sha256').update(content).digest('hex');

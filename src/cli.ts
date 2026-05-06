@@ -26,8 +26,8 @@ function normalizeKinds(value: string | undefined): Kind[] {
 
 const program = new Command();
 program
-  .name('airc')
-  .description('Install AIRC project definitions into Claude/Codex/OpenCode config surfaces')
+  .name('rac')
+  .description('Install RAC project definitions into Claude/Codex/OpenCode config surfaces')
   .showHelpAfterError()
   .configureOutput({ outputError: (str, write) => write(str) })
   .exitOverride((error) => {
@@ -37,14 +37,14 @@ program
   });
 
 program.command('init')
-  .description('Initialize .airc source tree with starter reviewer + project-gates + project-rules definitions')
+  .description('Initialize .rac source tree with starter reviewer + project-gates + project-rules definitions')
   .option('--empty', 'create folders only without starter examples')
   .action(async (opts: { empty?: boolean }) => {
     await initProject(process.cwd(), !!opts.empty);
   });
 
 program.command('install')
-  .description('Install selected kinds/targets from .airc definitions')
+  .description('Install selected kinds/targets from .rac definitions')
   .option('--target <targets>', 'comma-separated: claude,codex,opencode')
   .option('--kind <kinds>', 'comma-separated: agent,skill,mcp')
   .option('--dry-run', 'print planned changes only')

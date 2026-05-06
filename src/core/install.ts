@@ -7,7 +7,7 @@ import { buildRuntimeConfig } from './config-model.js';
 import { deleteManifest, loadManifest, saveManifest } from './manifest.js';
 import { loadAgents, loadMcps, loadSkills } from './parsers.js';
 import type { InstallManifest, InstallOptions, InstallResult, Kind, ManifestRecord, Target } from './types.js';
-import { AIRC_MARKER, FM_SENSITIVE_MARKER, sha256 } from './util.js';
+import { RAC_MARKER, FM_SENSITIVE_MARKER, sha256 } from './util.js';
 
 type PlannedWrite = ManifestRecord & {
   manifestRelPath: string;
@@ -41,7 +41,7 @@ async function canOverwrite(filePath: string, ownedRelPaths: Set<string>, relPat
   if (isJson) return false;
 
   const existing = await readFile(filePath, 'utf8');
-  return existing.includes(AIRC_MARKER) || existing.includes(FM_SENSITIVE_MARKER);
+  return existing.includes(RAC_MARKER) || existing.includes(FM_SENSITIVE_MARKER);
 }
 
 async function contentMatches(filePath: string, expectedHash: string): Promise<boolean> {
@@ -59,7 +59,7 @@ function selectedManifestRelPaths(targets: Target[], kinds: Kind[]): Set<string>
 }
 
 export async function initProject(cwd: string, empty = false): Promise<void> {
-  const root = path.join(cwd, '.airc');
+  const root = path.join(cwd, '.rac');
   for (const dirName of ['agents', 'skills', 'mcps']) {
     await mkdir(path.join(root, dirName), { recursive: true });
   }
@@ -129,7 +129,7 @@ export async function initProject(cwd: string, empty = false): Promise<void> {
 }
 
 export async function install(options: InstallOptions): Promise<InstallResult> {
-  const root = path.join(options.cwd, '.airc');
+  const root = path.join(options.cwd, '.rac');
   const targetRoot = options.cwd;
 
   const manifestsByRelPath = new Map<string, InstallManifest>();
@@ -302,7 +302,7 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
 }
 
 export async function doctor(cwd: string, targets: ('claude' | 'codex' | 'opencode')[], kinds: ('agent' | 'skill' | 'mcp')[]): Promise<string[]> {
-  const root = path.join(cwd, '.airc');
+  const root = path.join(cwd, '.rac');
 
   const parsedAgents = kinds.includes('agent') ? await loadAgents(root) : [];
   const parsedSkills = kinds.includes('skill') ? await loadSkills(root) : [];

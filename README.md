@@ -1,10 +1,10 @@
-# airc
+# rac
 
-Install `.airc` agent/skill/MCP definitions into Claude, Codex, and OpenCode config surfaces.
+Centralize agent/skill/MCP definitions in `.rac` as the source of truth, then generate and sync Claude, Codex, and OpenCode config surfaces.
 
 ## Purpose
 
-`airc` manages one source tree (`.airc/`) and installs generated target config files for:
+`rac` manages one source tree (`.rac/`) and generates/syncs target config files for:
 
 - Claude
 - Codex
@@ -16,28 +16,28 @@ It tracks managed outputs in per-target install manifests so later installs can 
 
 - Node.js `>=20`
 - `npm`
-- A project root containing `.airc/`
+- A project root containing `.rac/`
 
 ## Quick Start
 
 ```bash
 # 1) Initialize source definitions in project scope
-npx github:raniejade/airc init
+npx github:raniejade/rac init
 
 # 2) Validate definitions
-npx github:raniejade/airc doctor
+npx github:raniejade/rac doctor
 
 # 3) Preview generated changes
-npx github:raniejade/airc install --dry-run
+npx github:raniejade/rac install --dry-run
 
 # 4) Apply
-npx github:raniejade/airc install
+npx github:raniejade/rac install
 ```
 
-## Source Layout (`.airc/`)
+## Source Layout (`.rac/`)
 
 ```text
-.airc/
+.rac/
   agents/
     <id>.toml
   skills/
@@ -50,10 +50,10 @@ npx github:raniejade/airc install
 
 Definition rules:
 
-- Agents: one file per agent in `.airc/agents/*.toml`.
-- Skills: each skill must be in `.airc/skills/<id>/SKILL.md`.
+- Agents: one file per agent in `.rac/agents/*.toml`.
+- Skills: each skill must be in `.rac/skills/<id>/SKILL.md`.
 - Skill frontmatter must start at byte 0 with `+++` and end with `+++`.
-- MCPs: one file per server in `.airc/mcps/*.toml`.
+- MCPs: one file per server in `.rac/mcps/*.toml`.
 - MCP transport must be exactly one of:
   - local: `command` (+ optional `args`)
   - remote: `type` + `url`
@@ -70,7 +70,7 @@ Vendor overrides:
 
 ### Definition File Examples
 
-Agent definition (`.airc/agents/<id>.toml`):
+Agent definition (`.rac/agents/<id>.toml`):
 
 ```toml
 id = "reviewer"
@@ -89,7 +89,7 @@ model = "sonnet"
 - `instructions` can be inline text or a relative file path like `./instructions/reviewer.md`.
 - If `vendor.codex.emit = "instruction-only"`, do not set `vendor.codex.config` for that agent.
 
-Skill definition (`.airc/skills/<id>/SKILL.md`):
+Skill definition (`.rac/skills/<id>/SKILL.md`):
 
 ```markdown
 +++
@@ -111,7 +111,7 @@ Run the release checklist and report blocking issues.
 - Assets are resolved relative to the skill directory and copied with the installed skill.
 - Use `vendor.<target>.config` and `vendor.<target>.frontmatter` for target-specific skill frontmatter overlays; avoid duplicate keys across those two maps for the same target.
 
-MCP definition (`.airc/mcps/<id>.toml`):
+MCP definition (`.rac/mcps/<id>.toml`):
 
 ```toml
 id = "local-debug"
@@ -140,14 +140,14 @@ headers = { Authorization = "Bearer ${MCP_TOKEN}" }
 
 ## Command Reference
 
-Use `npx github:raniejade/airc ...` to run from GitHub, or replace it with `airc ...` when the binary is installed locally or globally.
+Use `npx github:raniejade/rac ...` to run from GitHub, or replace it with `rac ...` when the binary is installed locally or globally.
 
 ### `init`
 
-Create `.airc` folders and optional starter examples.
+Create `.rac` folders and optional starter examples.
 
 ```bash
-airc init [--empty]
+rac init [--empty]
 ```
 
 - `--empty`: only create folders, skip starter sample files
@@ -157,7 +157,7 @@ airc init [--empty]
 Validate definitions and print warnings.
 
 ```bash
-airc doctor [--target claude,codex,opencode] [--kind agent,skill,mcp]
+rac doctor [--target claude,codex,opencode] [--kind agent,skill,mcp]
 ```
 
 - Prints `ok` when no warnings are found.
@@ -170,7 +170,7 @@ airc doctor [--target claude,codex,opencode] [--kind agent,skill,mcp]
 Generate and install selected definitions.
 
 ```bash
-airc install [--target claude,codex,opencode] [--kind agent,skill,mcp] [--dry-run] [--clean] [--check] [--force]
+rac install [--target claude,codex,opencode] [--kind agent,skill,mcp] [--dry-run] [--clean] [--check] [--force]
 ```
 
 - `--dry-run`: previews planned create/update paths and performs no writes.
@@ -183,7 +183,7 @@ Defaults: omitting `--target` applies all targets; omitting `--kind` applies all
 Without `--force`, overwrite rules are:
 
 - allowed: manifest-owned files
-- allowed: text files containing AIRC managed/frontmatter-sensitive markers
+- allowed: text files containing RAC managed/frontmatter-sensitive markers
 - blocked: unmanaged JSON files
 - blocked: other unmanaged files without markers
 
@@ -197,7 +197,7 @@ Install manifests are used to track managed files and cleanup behavior.
 - Skills: `.claude/skills/<id>/SKILL.md` + skill assets
 - MCP:
   - `.mcp.json`
-- Install manifest: `.claude/.airc-install-manifest.json`
+- Install manifest: `.claude/.rac-install-manifest.json`
 
 ### Codex
 
@@ -207,15 +207,15 @@ Install manifests are used to track managed files and cleanup behavior.
 - Skills: `.agents/skills/<id>/SKILL.md` + skill assets
 - MCP: `.codex/config.toml`
 - Install manifests:
-  - agents + mcps: `.codex/.airc-install-manifest.json`
-  - skills: `.agents/.airc-install-manifest.json`
+  - agents + mcps: `.codex/.rac-install-manifest.json`
+  - skills: `.agents/.rac-install-manifest.json`
 
 ### OpenCode
 
 - Agents: `.opencode/agents/<id>.md`
 - Skills: `.opencode/skills/<id>/SKILL.md` + skill assets
 - MCP: `.opencode/opencode.json`
-- Install manifest: `.opencode/.airc-install-manifest.json`
+- Install manifest: `.opencode/.rac-install-manifest.json`
 
 ## Safe Install Workflow
 
@@ -223,16 +223,16 @@ Use this sequence when enabling or changing definitions:
 
 ```bash
 # Validate first
-airc doctor
+rac doctor
 
 # Preview planned create/update changes (no writes)
-airc install --dry-run
+rac install --dry-run
 
 # Apply selected targets/kinds if needed
-airc install --target codex --kind agent,skill,mcp
+rac install --target codex --kind agent,skill,mcp
 
 # Optional: run stale managed-output cleanup after reviewing current definitions/managed outputs
-airc install --clean
+rac install --clean
 ```
 
 Guidelines:
@@ -253,7 +253,7 @@ Guidelines:
   - `init` found starter files already present. Remove/rename them or run with `--empty` if you only need folders.
 
 - `duplicate agent id`, `duplicate skill id`, `duplicate mcp id`
-  - Ensure each ID is unique in `.airc` sources.
+  - Ensure each ID is unique in `.rac` sources.
 
 - `skill frontmatter must start with +++ at byte 0` or `missing closing +++ delimiter`
   - Fix `SKILL.md` TOML frontmatter delimiters and placement.
@@ -265,5 +265,5 @@ Guidelines:
   - Set required environment variables before running downstream tools.
 
 - `refusing overwrite unmanaged file: <path>`
-  - File exists and is not managed by `airc` manifest markers.
+  - File exists and is not managed by `rac` manifest markers.
   - Either migrate/delete it manually, or rerun with `--force` if replacement is intentional.
