@@ -1,4 +1,4 @@
-import { RAC_MARKER, FM_SENSITIVE_MARKER } from '../core/util.js';
+import { MANAGED_MARKDOWN_WARNING } from '../core/util.js';
 
 function yamlEscape(value: unknown): string {
   if (typeof value === 'string') return JSON.stringify(value);
@@ -14,5 +14,5 @@ function toYaml(frontmatter: Record<string, unknown>): string {
 }
 
 export function textManagedPayload(frontmatter: Record<string, unknown>, body: string): string {
-  return `---\n${toYaml(frontmatter)}\n---\n${FM_SENSITIVE_MARKER}\n${RAC_MARKER}\n\n${body}`;
+  return `---\n${toYaml(frontmatter)}\n---\n${MANAGED_MARKDOWN_WARNING}\n\n${body}`;
 }

@@ -1,13 +1,15 @@
 import { copyFile, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { parse as parseJsonc } from 'jsonc-parser';
+
 import { adapterFor, vendorManifestRelPath } from '../adapters/target-adapters.js';
 
 import { buildRuntimeConfig } from './config-model.js';
 import { deleteManifest, loadManifest, saveManifest } from './manifest.js';
 import { loadAgents, loadMcps, loadRules, loadSkills, resolvePacks } from './parsers.js';
 import type { InstallManifest, InstallOptions, InstallResult, Kind, ManifestRecord, Target } from './types.js';
-import { FM_SENSITIVE_MARKER, RAC_MARKER, resolveContainedPath, sha256 } from './util.js';
+import { LEGACY_MARKERS, MANAGED_JSONC_WARNING, MANAGED_MARKDOWN_WARNING, MANAGED_TOML_WARNING, resolveContainedPath, sha256 } from './util.js';
 
 type PlannedWrite = ManifestRecord & {
   manifestRelPath: string;
@@ -43,14 +45,21 @@ function assertNoCrossPackDuplicate(items: Array<{ id: string; pack: string }>, 
   }
 }
 
-async function canOverwrite(filePath: string, ownedRelPaths: Set<string>, relPath: string, force: boolean, isJson: boolean): Promise<boolean> {
+function startsWithManagedLine(content: string, warning: string): boolean {
+  return content.startsWith(`${warning}\n`) || content.startsWith(`${warning}\r\n`);
+}
+
+async function canOverwrite(filePath: string, ownedRelPaths: Set<string>, relPath: string, force: boolean, strictJson: boolean): Promise<boolean> {
   if (!(await exists(filePath))) return true;
   if (force) return true;
   if (ownedRelPaths.has(relPath)) return true;
-  if (isJson) return false;
+  if (strictJson) return false;
 
   const existing = await readFile(filePath, 'utf8');
-  return existing.includes(RAC_MARKER) || existing.includes(FM_SENSITIVE_MARKER);
+  if (startsWithManagedLine(existing, MANAGED_TOML_WARNING)) return true;
+  if (startsWithManagedLine(existing, MANAGED_JSONC_WARNING)) return true;
+  if (existing.includes(MANAGED_MARKDOWN_WARNING)) return true;
+  return LEGACY_MARKERS.some((marker) => existing.includes(marker));
 }
 
 async function contentMatches(filePath: string, expectedHash: string): Promise<boolean> {
@@ -70,7 +79,7 @@ function selectedManifestRelPaths(targets: Target[], kinds: Kind[]): Set<string>
 const ALL_KINDS: Kind[] = ['agent', 'skill', 'mcp', 'rule'];
 
 function isManagedOpenCodeSharedJson(record: Pick<ManifestRecord, 'target' | 'kind' | 'relPath'>): boolean {
-  return record.target === 'opencode' && (record.kind === 'mcp' || record.kind === 'rule') && record.relPath === '.opencode/opencode.json';
+  return record.target === 'opencode' && (record.kind === 'mcp' || record.kind === 'rule') && (record.relPath === '.opencode/opencode.jsonc' || record.relPath === '.opencode/opencode.json');
 }
 
 function stableOpenCodeConfigJson(config: Record<string, unknown>): string {
@@ -81,7 +90,11 @@ function stableOpenCodeConfigJson(config: Record<string, unknown>): string {
     if (key === 'mcp' || key === 'permission') continue;
     ordered[key] = value;
   }
-  return `${JSON.stringify(ordered, null, 2)}\n`;
+  return `${MANAGED_JSONC_WARNING}\n${JSON.stringify(ordered, null, 2)}\n`;
+}
+
+function parseOpenCodeConfig(raw: string): Record<string, unknown> {
+  return parseJsonc(raw) as Record<string, unknown>;
 }
 
 export async function initProject(cwd: string, empty = false): Promise<void> {
@@ -254,19 +267,26 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
     }
   }
 
-  const opencodeSharedWrites = planByRelPath.get('.opencode/opencode.json') ?? [];
+  const opencodeSharedWrites = planByRelPath.get('.opencode/opencode.jsonc') ?? [];
+  const legacyOpenCodeSharedRecords = (recordsByRelPath.get('.opencode/opencode.json') ?? []).filter(isManagedOpenCodeSharedJson);
+  const legacyOpenCodeSharedPath = resolveContainedPath(targetRoot, '.opencode/opencode.json', 'legacy shared opencode path');
+  const shouldMigrateLegacyOpenCodeJson = options.targets.includes('opencode')
+    && (options.kinds.includes('mcp') || options.kinds.includes('rule'))
+    && legacyOpenCodeSharedRecords.length > 0
+    && (await exists(legacyOpenCodeSharedPath));
   let openCodeSharedManagedHashOverride: string | undefined;
   if (opencodeSharedWrites.length > 0) {
     const siblingKinds = new Set<Kind>();
-    for (const record of recordsByRelPath.get('.opencode/opencode.json') ?? []) {
+    for (const record of [...(recordsByRelPath.get('.opencode/opencode.jsonc') ?? []), ...(recordsByRelPath.get('.opencode/opencode.json') ?? [])]) {
       if (!isManagedOpenCodeSharedJson(record)) continue;
       if (options.targets.includes(record.target) && !options.kinds.includes(record.kind)) siblingKinds.add(record.kind);
     }
-    const opencodeSharedPath = resolveContainedPath(targetRoot, '.opencode/opencode.json', 'shared opencode path');
-    if (siblingKinds.size > 0 && (await exists(opencodeSharedPath))) {
-      const existingRaw = await readFile(opencodeSharedPath, 'utf8');
-      const existingParsed = JSON.parse(existingRaw) as Record<string, unknown>;
-      const generatedParsed = JSON.parse(opencodeSharedWrites[0].content ?? '{}') as Record<string, unknown>;
+    const opencodeSharedPath = resolveContainedPath(targetRoot, '.opencode/opencode.jsonc', 'shared opencode path');
+    const existingSharedPath = (await exists(opencodeSharedPath)) ? opencodeSharedPath : ((await exists(legacyOpenCodeSharedPath)) ? legacyOpenCodeSharedPath : undefined);
+    if (siblingKinds.size > 0 && existingSharedPath) {
+      const existingRaw = await readFile(existingSharedPath, 'utf8');
+      const existingParsed = parseOpenCodeConfig(existingRaw);
+      const generatedParsed = parseOpenCodeConfig(opencodeSharedWrites[0].content ?? '{}');
       if (siblingKinds.has('mcp') && !Object.prototype.hasOwnProperty.call(generatedParsed, 'mcp') && Object.prototype.hasOwnProperty.call(existingParsed, 'mcp')) {
         generatedParsed.mcp = existingParsed.mcp;
       }
@@ -293,7 +313,8 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
 
   for (const write of plan) {
     if (!checkedOverwritePath.has(write.absPath)) {
-      if (!(await canOverwrite(write.absPath, ownedRelPaths, write.relPath, !!options.force, !!write.isJson))) {
+      const strictJson = write.relPath === '.mcp.json' || write.relPath === '.claude/settings.json' || write.relPath.endsWith('.json') || write.relPath.endsWith('.rac-install-manifest.json');
+      if (!(await canOverwrite(write.absPath, ownedRelPaths, write.relPath, !!options.force, strictJson))) {
         throw new Error(`refusing overwrite unmanaged file: ${write.absPath}`);
       }
       checkedOverwritePath.add(write.absPath);
@@ -346,16 +367,17 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
 
   let cleanRewriteOpenCodeShared: { absPath: string; content: string; hash: string } | undefined;
   if (options.clean && options.targets.includes('opencode') && (options.kinds.includes('mcp') || options.kinds.includes('rule'))) {
-    const sharedRelPath = '.opencode/opencode.json';
+    const sharedRelPath = '.opencode/opencode.jsonc';
     const absPath = resolveContainedPath(targetRoot, sharedRelPath, 'shared opencode path');
-    const sharedManifestRecords = (recordsByRelPath.get(sharedRelPath) ?? []).filter(isManagedOpenCodeSharedJson);
+    const sharedManifestRecords = ([...(recordsByRelPath.get(sharedRelPath) ?? []), ...(recordsByRelPath.get('.opencode/opencode.json') ?? [])]).filter(isManagedOpenCodeSharedJson);
     const hasUnselectedSibling = sharedManifestRecords.some((record) => !selected(record));
-    if (hasUnselectedSibling && (await exists(absPath))) {
-      const existingRaw = await readFile(absPath, 'utf8');
-      const existingParsed = JSON.parse(existingRaw) as Record<string, unknown>;
+    const existingSharedPath = (await exists(absPath)) ? absPath : ((await exists(legacyOpenCodeSharedPath)) ? legacyOpenCodeSharedPath : undefined);
+    if (hasUnselectedSibling && existingSharedPath) {
+      const existingRaw = await readFile(existingSharedPath, 'utf8');
+      const existingParsed = parseOpenCodeConfig(existingRaw);
       const generatedWrites = planByRelPath.get(sharedRelPath) ?? [];
       const generatedParsed = generatedWrites.length > 0
-        ? (JSON.parse(generatedWrites[0].content ?? '{}') as Record<string, unknown>)
+        ? parseOpenCodeConfig(generatedWrites[0].content ?? '{}')
         : {};
 
       if (!Object.prototype.hasOwnProperty.call(generatedParsed, 'mcp') && sharedManifestRecords.some((record) => !selected(record) && record.kind === 'mcp') && Object.prototype.hasOwnProperty.call(existingParsed, 'mcp')) {
@@ -392,16 +414,27 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
     }
   }
 
+  if (!options.dryRun && !options.check && shouldMigrateLegacyOpenCodeJson) {
+    await rm(legacyOpenCodeSharedPath, { force: true });
+    del.push(legacyOpenCodeSharedPath);
+  }
+
   const nextManifestsByRelPath = new Map<string, InstallManifest>();
+  const migrateLegacyOpenCodeSharedRecord = (record: ManifestRecord): ManifestRecord => {
+    if (shouldMigrateLegacyOpenCodeJson && isManagedOpenCodeSharedJson(record) && record.relPath === '.opencode/opencode.json') {
+      return { ...record, relPath: '.opencode/opencode.jsonc' };
+    }
+    return record;
+  };
   const applySharedHashOverride = (record: ManifestRecord): ManifestRecord => {
     if (openCodeSharedManagedHashOverride && isManagedOpenCodeSharedJson(record)) return { ...record, hash: openCodeSharedManagedHashOverride };
     return record;
   };
   for (const [manifestRelPath, manifest] of manifestsByRelPath) {
-    const keep = manifest.records.filter((record) => !selected(record)).map(applySharedHashOverride);
+    const keep = manifest.records.filter((record) => !selected(record)).map(migrateLegacyOpenCodeSharedRecord).map(applySharedHashOverride);
     const current = plan
       .filter((record) => record.manifestRelPath === manifestRelPath)
-      .map(({ version, pack, target, kind, id, source, relPath, hash, inventory }) => applySharedHashOverride({ version, pack, target, kind, id, source, relPath, hash, inventory }));
+      .map(({ version, pack, target, kind, id, source, relPath, hash, inventory }) => applySharedHashOverride(migrateLegacyOpenCodeSharedRecord({ version, pack, target, kind, id, source, relPath, hash, inventory })));
     nextManifestsByRelPath.set(manifestRelPath, { version: 1, records: sortManifestRecords([...keep, ...current]) });
   }
 

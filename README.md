@@ -280,7 +280,7 @@ Manifest behavior:
 
 - Agents: `.opencode/agents/<id>.md`
 - Skills: `.opencode/skills/<id>/SKILL.md` + skill assets
-- MCP + rules config: `.opencode/opencode.json` (rules render as `permission.bash` command-pattern keys mapped to `"deny"`)
+- MCP + rules config: `.opencode/opencode.jsonc` (rules render as `permission.bash` command-pattern keys mapped to `"deny"`)
 - Install manifest: `.opencode/.rac-install-manifest.json`
 
 ## Safe Install Workflow

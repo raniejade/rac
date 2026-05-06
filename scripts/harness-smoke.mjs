@@ -6,6 +6,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 
+import { parse as parseJsonc } from 'jsonc-parser';
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
 const cliPath = path.join(repoRoot, 'dist', 'cli.js');
@@ -36,8 +38,8 @@ async function expectExists(filePath) {
   await stat(filePath);
 }
 
-async function readJson(filePath) {
-  return JSON.parse(await readFile(filePath, 'utf8'));
+async function readJsonc(filePath) {
+  return parseJsonc(await readFile(filePath, 'utf8'));
 }
 
 async function main() {
@@ -82,9 +84,9 @@ async function main() {
     await expectExists(path.join(sampleRepo, '.claude', 'settings.json'));
 
     await expectExists(path.join(sampleRepo, '.mcp.json'));
-    await expectExists(path.join(sampleRepo, '.opencode', 'opencode.json'));
+    await expectExists(path.join(sampleRepo, '.opencode', 'opencode.jsonc'));
 
-    const opencode = await readJson(path.join(sampleRepo, '.opencode', 'opencode.json'));
+    const opencode = await readJsonc(path.join(sampleRepo, '.opencode', 'opencode.jsonc'));
     const projectRules = opencode?.mcp?.['project-rules'];
     if (!projectRules || projectRules.type !== 'local' || projectRules.enabled !== true) {
       throw new Error('OpenCode MCP entry for project-rules missing required type/local enabled schema');

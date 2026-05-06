@@ -2,7 +2,7 @@ import path from 'node:path';
 
 import type { RuntimeConfig, SkillAssetConfig } from '../core/config-model.js';
 import type { Kind, ManagedInventoryEntry, Pack, Target } from '../core/types.js';
-import { jsonPathBracketSelector, RAC_MARKER, sha256, tomlQuotedKeySegment } from '../core/util.js';
+import { jsonPathBracketSelector, MANAGED_JSONC_WARNING, MANAGED_TOML_WARNING, sha256, tomlQuotedKeySegment } from '../core/util.js';
 
 import { textManagedPayload } from './shared.js';
 
@@ -150,7 +150,7 @@ function codexAdapter(): TargetAdapter {
             developer_instructions: agent.instructions
           };
           const merged = mergeGeneratedWithVendor(generated, agent.vendor.codexConfig, `agent ${agent.id} vendor.codex.config`);
-          const lines = [RAC_MARKER];
+          const lines = [MANAGED_TOML_WARNING];
           for (const [key, value] of Object.entries(merged)) lines.push(`${key} = ${toTomlValue(value)}`);
           const content = `${lines.join('\n')}\n`;
           const relPath = `.codex/agents/${agent.id}.toml`;
@@ -169,7 +169,7 @@ function codexAdapter(): TargetAdapter {
       }
 
       if (config.mcps.length > 0) {
-        const lines = [RAC_MARKER];
+        const lines = [MANAGED_TOML_WARNING];
         for (const mcp of [...config.mcps].sort((a, b) => a.id.localeCompare(b.id))) {
           lines.push(`[mcp_servers.${tomlQuotedKeySegment(mcp.id)}]`);
           const generated: Record<string, unknown> = mcp.transport.kind === 'local'
@@ -196,7 +196,7 @@ function codexAdapter(): TargetAdapter {
           bySource.set(key, existing);
         }
         for (const [sourceKey, sourceRules] of [...bySource.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
-          const lines = [RAC_MARKER];
+          const lines = [MANAGED_TOML_WARNING];
           for (const rule of [...sourceRules].sort((a, b) => a.id.localeCompare(b.id))) {
             const tool = rule.tools[0];
             lines.push(`prefix_rule(${JSON.stringify(tool.pattern)}, ${JSON.stringify(tool.decision)}, ${JSON.stringify(tool.justification)}, ${tool.appendWildcard ? 'true' : 'false'})`);
@@ -271,13 +271,13 @@ function opencodeAdapter(): TargetAdapter {
             .sort((a, b) => a.localeCompare(b))
             .map((command) => [command, 'deny'])
         );
-        const content = `${JSON.stringify({ ...(config.mcps.length > 0 ? { mcp } : {}), ...(config.rules.length > 0 ? { permission: { bash } } : {}) }, null, 2)}\n`;
+        const content = `${MANAGED_JSONC_WARNING}\n${JSON.stringify({ ...(config.mcps.length > 0 ? { mcp } : {}), ...(config.rules.length > 0 ? { permission: { bash } } : {}) }, null, 2)}\n`;
         for (const server of config.mcps) {
-          const relPath = '.opencode/opencode.json';
+          const relPath = '.opencode/opencode.jsonc';
           outputs.push({ pack: server.pack, target: 'opencode', kind: 'mcp', id: server.id, source: server.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('opencode', 'mcp'), inventory: [{ version: 1, format: 'json', selector: jsonPathBracketSelector(['mcp', server.id]) }], content, hash: sha256(content), isJson: true });
         }
         for (const rule of config.rules) {
-          const relPath = '.opencode/opencode.json';
+          const relPath = '.opencode/opencode.jsonc';
           outputs.push({ pack: rule.pack, target: 'opencode', kind: 'rule', id: rule.id, source: rule.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('opencode', 'rule'), inventory: [{ version: 1, format: 'json', selector: '$.permission.bash' }], content, hash: sha256(content), isJson: true });
         }
       }

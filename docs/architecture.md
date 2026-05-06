@@ -83,9 +83,9 @@ Rule output semantics:
 
 - Codex: `.codex/rules/<pack-id>/<source-file>.rules` with `prefix_rule(...)` calls (one per RAC rule), preserving nested alternatives in `pattern`.
 - Claude: `.claude/settings.json` -> `permissions.deny` entries expanded from alternatives using `Bash(...)`.
-- OpenCode: `.opencode/opencode.json` -> `permission.bash` object entries expanded from alternatives (`{ "<command pattern>": "deny" }`).
+- OpenCode: `.opencode/opencode.jsonc` -> `permission.bash` object entries expanded from alternatives (`{ "<command pattern>": "deny" }`).
 - `append_wildcard` defaults to `true`; when true, adapters append trailing ` *` in string-expanded deny entries.
-- OpenCode writes one combined `.opencode/opencode.json` payload when MCP and rules are both selected.
+- OpenCode writes one combined `.opencode/opencode.jsonc` payload when MCP and rules are both selected.
 
 Responsibilities:
 

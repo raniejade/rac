@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import os from 'node:os';
 import path from 'node:path';
 
+import { parse as parseJsonc } from 'jsonc-parser';
 import { parse as parseToml } from 'smol-toml';
 import { describe, expect, it, afterEach } from 'vitest';
 
@@ -11,6 +12,7 @@ import { buildRuntimeConfig } from '../src/core/config-model.js';
 import { doctor, initProject, install } from '../src/core/install.js';
 import { addProjectPack, listProjectPacks, removeProjectPack } from '../src/core/pack-config.js';
 import { loadAgents, loadMcps, loadProjectPackConfig, loadRules, loadSharedPackConfig, loadSkills } from '../src/core/parsers.js';
+import { MANAGED_JSONC_WARNING, MANAGED_MARKDOWN_WARNING, MANAGED_TOML_WARNING } from '../src/core/util.js';
 
 const tempDirs: string[] = [];
 let cliBuilt = false;
@@ -19,6 +21,10 @@ async function makeTmp(): Promise<string> {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'rac-'));
   tempDirs.push(dir);
   return dir;
+}
+
+async function readJsoncFile<T>(filePath: string): Promise<T> {
+  return parseJsonc(await readFile(filePath, 'utf8')) as T;
 }
 
 function runCli(cwd: string, args: string[]): { status: number | null; stdout: string; stderr: string } {
@@ -346,7 +352,7 @@ describe('install + doctor', () => {
     await seed(root);
 
     await mkdir(path.join(root, '.opencode'), { recursive: true });
-    await writeFile(path.join(root, '.opencode/opencode.json'), '{"external":true}\n', 'utf8');
+    await writeFile(path.join(root, '.opencode/opencode.jsonc'), '{"external":true}\n', 'utf8');
     await expect(install({ cwd: root, targets: ['opencode'], kinds: ['mcp'] })).rejects.toThrow('refusing overwrite unmanaged file');
     await expect(install({ cwd: root, targets: ['opencode'], kinds: ['mcp'], dryRun: true })).rejects.toThrow('refusing overwrite unmanaged file');
 
@@ -356,6 +362,39 @@ describe('install + doctor', () => {
     await expect(stat(path.join(root, '.codex/.rac-install-manifest.json'))).rejects.toThrow();
 
     await expect(install({ cwd: root, targets: ['opencode'], kinds: ['mcp'], force: true })).resolves.toBeTruthy();
+  });
+
+  it('recognizes new markdown warnings and legacy markers for manifest-loss overwrite safety', async () => {
+    const root = await makeTmp();
+    await seed(root);
+
+    const agentPath = path.join(root, '.codex/agents/reviewer.md');
+    const manifestPath = path.join(root, '.codex/.rac-install-manifest.json');
+
+    await install({ cwd: root, targets: ['codex'], kinds: ['agent'] });
+    expect(await readFile(agentPath, 'utf8')).toContain(MANAGED_MARKDOWN_WARNING);
+
+    await rm(manifestPath);
+    await expect(install({ cwd: root, targets: ['codex'], kinds: ['agent'] })).resolves.toBeTruthy();
+
+    await rm(manifestPath);
+    await writeFile(agentPath, '<!-- managed-by-rac -->\nold generated content\n', 'utf8');
+    await expect(install({ cwd: root, targets: ['codex'], kinds: ['agent'] })).resolves.toBeTruthy();
+  });
+
+  it('recognizes managed hash and jsonc warnings with CRLF line endings for manifest-loss overwrite safety', async () => {
+    const root = await makeTmp();
+    await seed(root);
+
+    await install({ cwd: root, targets: ['codex'], kinds: ['mcp'] });
+    await rm(path.join(root, '.codex/.rac-install-manifest.json'));
+    await writeFile(path.join(root, '.codex/config.toml'), `${MANAGED_TOML_WARNING}\r\n[mcp_servers.project]\r\ncommand = "node"\r\n`, 'utf8');
+    await expect(install({ cwd: root, targets: ['codex'], kinds: ['mcp'] })).resolves.toBeTruthy();
+
+    await install({ cwd: root, targets: ['opencode'], kinds: ['mcp'] });
+    await rm(path.join(root, '.opencode/.rac-install-manifest.json'));
+    await writeFile(path.join(root, '.opencode/opencode.jsonc'), `${MANAGED_JSONC_WARNING}\r\n{\r\n  "mcp": {}\r\n}\r\n`, 'utf8');
+    await expect(install({ cwd: root, targets: ['opencode'], kinds: ['mcp'] })).resolves.toBeTruthy();
   });
 
   it('clean deletes only stale manifest-selected paths', async () => {
@@ -384,12 +423,15 @@ describe('install + doctor', () => {
     expect(Object.keys(claudeProject.mcpServers)).toEqual(['a-remote', 'project-rules', 'z-remote']);
 
     const codexToml = await readFile(path.join(root, '.codex/config.toml'), 'utf8');
+    expect(codexToml.startsWith(`${MANAGED_TOML_WARNING}\n`)).toBe(true);
     expect(codexToml.indexOf('[mcp_servers."a-remote"]')).toBeLessThan(codexToml.indexOf('[mcp_servers."project-rules"]'));
     expect(codexToml.indexOf('[mcp_servers."project-rules"]')).toBeLessThan(codexToml.indexOf('[mcp_servers."z-remote"]'));
     expect(codexToml).toContain('startup_timeout_sec = 2');
     expect(codexToml).not.toContain('startup_timeout = ');
 
-    const opencode = JSON.parse(await readFile(path.join(root, '.opencode/opencode.json'), 'utf8')) as { mcp: Record<string, { type: string; enabled: boolean; command?: string[]; url?: string }> };
+    const opencodeRaw = await readFile(path.join(root, '.opencode/opencode.jsonc'), 'utf8');
+    expect(opencodeRaw.startsWith(`${MANAGED_JSONC_WARNING}\n`)).toBe(true);
+    const opencode = await readJsoncFile<{ mcp: Record<string, { type: string; enabled: boolean; command?: string[]; url?: string }> }>(path.join(root, '.opencode/opencode.jsonc'));
     expect(Object.keys(opencode.mcp)).toEqual(['a-remote', 'project-rules', 'z-remote']);
   });
 
@@ -400,6 +442,7 @@ describe('install + doctor', () => {
     await install({ cwd: root, targets: ['claude', 'codex', 'opencode'], kinds: ['mcp', 'rule'] });
 
     const codexRules = await readFile(path.join(root, '.codex/rules/project/wrappers.toml.rules'), 'utf8');
+    expect(codexRules.startsWith(`${MANAGED_TOML_WARNING}\n`)).toBe(true);
     expect(codexRules).toContain('prefix_rule([');
     expect(codexRules).toContain('["gh",["pr","issue"],"merge"]');
 
@@ -408,7 +451,7 @@ describe('install + doctor', () => {
     expect(claudeSettings.permissions.deny).toContain('Bash(gh issue merge *)');
     expect(claudeSettings.permissions.deny).toContain('Bash(git push)');
 
-    const opencode = JSON.parse(await readFile(path.join(root, '.opencode/opencode.json'), 'utf8')) as { mcp: Record<string, unknown>; permission: { bash: Record<string, string> } };
+    const opencode = await readJsoncFile<{ mcp: Record<string, unknown>; permission: { bash: Record<string, string> } }>(path.join(root, '.opencode/opencode.jsonc'));
     expect(opencode.mcp).toBeTruthy();
     expect(opencode.permission.bash['gh pr merge *']).toBe('deny');
     expect(opencode.permission.bash['gh issue merge *']).toBe('deny');
@@ -422,10 +465,10 @@ describe('install + doctor', () => {
     await install({ cwd: root, targets: ['opencode'], kinds: ['mcp'] });
     await install({ cwd: root, targets: ['opencode'], kinds: ['rule'] });
 
-    const combined = JSON.parse(await readFile(path.join(root, '.opencode/opencode.json'), 'utf8')) as {
+    const combined = await readJsoncFile<{
       mcp?: Record<string, unknown>;
       permission?: { bash?: Record<string, string> };
-    };
+    }>(path.join(root, '.opencode/opencode.jsonc'));
     expect(combined.mcp).toBeTruthy();
     expect(combined.permission?.bash?.['git push']).toBe('deny');
 
@@ -433,12 +476,53 @@ describe('install + doctor', () => {
 
     await rm(path.join(root, '.rac/rules/wrappers.toml'));
     await install({ cwd: root, targets: ['opencode'], kinds: ['rule'], clean: true });
-    const cleaned = JSON.parse(await readFile(path.join(root, '.opencode/opencode.json'), 'utf8')) as {
+    const cleaned = await readJsoncFile<{
       mcp?: Record<string, unknown>;
       permission?: unknown;
-    };
+    }>(path.join(root, '.opencode/opencode.jsonc'));
     expect(cleaned.mcp).toBeTruthy();
     expect(cleaned.permission).toBeUndefined();
+  });
+
+  it('migrates managed legacy OpenCode shared mcp/rule sibling manifest records during single-kind install', async () => {
+    const root = await makeTmp();
+    await seed(root);
+
+    await install({ cwd: root, targets: ['opencode'], kinds: ['mcp', 'rule'] });
+    const legacyPath = path.join(root, '.opencode/opencode.json');
+    const jsoncPath = path.join(root, '.opencode/opencode.jsonc');
+    const manifestPath = path.join(root, '.opencode/.rac-install-manifest.json');
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as {
+      version: number;
+      records: Array<{ kind: string; relPath: string; hash: string }>;
+    };
+    manifest.records = manifest.records.map((record) => ({ ...record, relPath: '.opencode/opencode.json' }));
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+    await rm(jsoncPath);
+    await writeFile(
+      legacyPath,
+      '{\n  "mcp": {\n    "legacy": { "type": "local", "enabled": true, "command": ["node"] }\n  },\n  "permission": {\n    "bash": {\n      "legacy cmd": "deny"\n    }\n  }\n}\n',
+      'utf8'
+    );
+
+    await expect(install({ cwd: root, targets: ['opencode'], kinds: ['mcp'], check: true })).rejects.toThrow('stale managed output requires cleanup');
+    await expect(stat(legacyPath)).resolves.toBeTruthy();
+
+    await install({ cwd: root, targets: ['opencode'], kinds: ['mcp'] });
+    await expect(stat(legacyPath)).rejects.toThrow();
+    await expect(stat(jsoncPath)).resolves.toBeTruthy();
+    const migrated = JSON.parse(await readFile(manifestPath, 'utf8')) as {
+      records: Array<{ kind: string; relPath: string; hash: string }>;
+    };
+    const mcpRecord = migrated.records.find((record) => record.kind === 'mcp');
+    const ruleRecord = migrated.records.find((record) => record.kind === 'rule');
+    expect(mcpRecord?.relPath).toBe('.opencode/opencode.jsonc');
+    expect(ruleRecord?.relPath).toBe('.opencode/opencode.jsonc');
+    expect(mcpRecord?.hash).toBe(ruleRecord?.hash);
+
+    await expect(install({ cwd: root, targets: ['opencode'], kinds: ['mcp'], check: true })).resolves.toBeTruthy();
+    await install({ cwd: root, targets: ['opencode'], kinds: ['rule'] });
+    await expect(install({ cwd: root, targets: ['opencode'], kinds: ['rule'], check: true })).resolves.toBeTruthy();
   });
 
   it('vendor compatibility schema: OpenCode MCP emits local/remote typed entries and rejects legacy command object shape', async () => {
@@ -448,9 +532,9 @@ describe('install + doctor', () => {
 
     await install({ cwd: root, targets: ['opencode'], kinds: ['mcp'] });
 
-    const opencode = JSON.parse(await readFile(path.join(root, '.opencode/opencode.json'), 'utf8')) as {
+    const opencode = await readJsoncFile<{
       mcp: Record<string, { type: string; enabled: boolean; command?: unknown; url?: unknown }>;
-    };
+    }>(path.join(root, '.opencode/opencode.jsonc'));
 
     expect(opencode.mcp['project-rules']).toEqual({
       type: 'local',
@@ -685,7 +769,8 @@ describe('install + doctor', () => {
 
     await install({ cwd: root, targets: ['codex'], kinds: ['agent'] });
     const toml = await readFile(path.join(root, '.codex/agents/reviewer.toml'), 'utf8');
-    const parsed = parseToml(toml.replace(/^<!-- managed-by-rac -->\n/, '')) as Record<string, unknown>;
+    expect(toml.startsWith(`${MANAGED_TOML_WARNING}\n`)).toBe(true);
+    const parsed = parseToml(toml) as Record<string, unknown>;
 
     expect(toml).toContain('name = "reviewer"');
     expect(toml).toContain('description = "reviewer"');
@@ -772,7 +857,7 @@ describe('install + doctor', () => {
     const codexToml = await readFile(path.join(root, '.codex/config.toml'), 'utf8');
     expect(codexToml).toContain('enabled = true');
 
-    const opencode = JSON.parse(await readFile(path.join(root, '.opencode/opencode.json'), 'utf8')) as { mcp: Record<string, Record<string, unknown>> };
+    const opencode = await readJsoncFile<{ mcp: Record<string, Record<string, unknown>> }>(path.join(root, '.opencode/opencode.jsonc'));
     expect(opencode.mcp.server.readOnly).toBe(true);
   });
 
@@ -789,16 +874,25 @@ describe('install + doctor', () => {
     await install({ cwd: root, targets: ['claude', 'codex', 'opencode'], kinds: ['skill'] });
 
     const claudeSkill = await readFile(path.join(root, '.claude/skills/s1/SKILL.md'), 'utf8');
+    expect(claudeSkill).toContain(MANAGED_MARKDOWN_WARNING);
+    expect(claudeSkill).not.toContain('managed-by-rac');
+    expect(claudeSkill).not.toContain('rac-frontmatter-sensitive');
     expect(claudeSkill).toContain('name: "s1"');
     expect(claudeSkill).toContain('description: "skill"');
     expect(claudeSkill).toContain('audience: "claude-config"');
 
     const codexSkill = await readFile(path.join(root, '.agents/skills/s1/SKILL.md'), 'utf8');
+    expect(codexSkill).toContain(MANAGED_MARKDOWN_WARNING);
+    expect(codexSkill).not.toContain('managed-by-rac');
+    expect(codexSkill).not.toContain('rac-frontmatter-sensitive');
     expect(codexSkill).toContain('name: "s1"');
     expect(codexSkill).toContain('description: "skill"');
     expect(codexSkill).toContain('model: "gpt-5"');
 
     const opencodeSkill = await readFile(path.join(root, '.opencode/skills/s1/SKILL.md'), 'utf8');
+    expect(opencodeSkill).toContain(MANAGED_MARKDOWN_WARNING);
+    expect(opencodeSkill).not.toContain('managed-by-rac');
+    expect(opencodeSkill).not.toContain('rac-frontmatter-sensitive');
     expect(opencodeSkill).toContain('name: "s1"');
     expect(opencodeSkill).toContain('description: "skill"');
     expect(opencodeSkill).toContain('enabled: true');
