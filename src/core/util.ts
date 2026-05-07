@@ -5,7 +5,6 @@ export const MANAGED_WARNING_TEXT = 'DO NOT EDIT; managed by rac';
 export const MANAGED_MARKDOWN_WARNING = `<!-- ${MANAGED_WARNING_TEXT} -->`;
 export const MANAGED_TOML_WARNING = `# ${MANAGED_WARNING_TEXT}`;
 export const MANAGED_JSONC_WARNING = `// ${MANAGED_WARNING_TEXT}`;
-export const LEGACY_MARKERS = ['<!-- managed-by-rac -->', '<!-- rac-frontmatter-sensitive -->'];
 
 export function sha256(content: string | Buffer): string {
   return crypto.createHash('sha256').update(content).digest('hex');

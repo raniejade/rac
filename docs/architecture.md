@@ -59,7 +59,7 @@ Responsibilities:
 - `vendor.<target>.frontmatter` for skill markdown frontmatter overlays
 - skill frontmatter merge order is `base generated/frontmatter -> vendor.<target>.config -> vendor.<target>.frontmatter`
 - skill overlay maps cannot collide with generated keys (`name`, `description`) and cannot duplicate keys across `config` + `frontmatter`
-- Enforce collision rules for generated keys and incompatibilities (for example instruction-only + codex config)
+- Enforce generated-key collision rules
 - Collect config warnings as runtime signals
 
 Non-responsibilities:
@@ -132,7 +132,7 @@ Safety model:
 - Manifest identity includes pack ID, so removed shared packs clean as stale outputs
 - Manifest loads are strict-schema validated (missing file only returns empty; invalid schema/JSON/version throws)
 - Adapter output paths, manifest paths, and manifest record `relPath`s must resolve inside project root before overwrite/write/check/save/delete/clean
-- Unmanaged files are protected from overwrite unless explicit conditions are met (`force`, manifest-owned, or managed markers for text outputs)
+- Unmanaged files are protected from overwrite unless explicit conditions are met (`force`, manifest-owned, TOML/JSONC managed warning at byte 0, or canonical markdown shape with YAML frontmatter at byte 0 + managed marker immediately after the closing frontmatter)
 - Deletions are constrained to stale manifest-owned outputs when `clean` is enabled
 
 This keeps write policy centralized and consistent across all vendors.

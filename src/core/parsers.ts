@@ -145,23 +145,58 @@ export async function loadAgents(root: string, packId: string): Promise<AgentDef
   const out = [] as AgentDef[];
   for (const file of files) {
     const parsed = agentSchema.parse(parseTomlOrThrow(file, await readFile(file, 'utf8')));
-    out.push({ pack: packId, packRoot: root, ...parsed, id: normalizeDefinitionId('agent', parsed.id), sourcePath: file, sourceName: path.relative(root, file) });
+    out.push({
+      pack: packId,
+      packRoot: root,
+      ...parsed,
+      instructionsIsTemplate: parsed.instructions.endsWith('.tpl.md') || parsed.instructions.endsWith('.tpl.txt'),
+      id: normalizeDefinitionId('agent', parsed.id),
+      sourcePath: file,
+      sourceName: path.relative(root, file)
+    });
   }
   mapId(out, 'agent');
   return out;
 }
 
 export async function loadSkills(root: string, packId: string): Promise<SkillDef[]> {
-  const files = await fg('skills/*/SKILL.md', { cwd: root, absolute: true });
-  const out: SkillDef[] = [];
+  const files = await fg('skills/*/SKILL*.md', { cwd: root, absolute: true });
+  const byDir = new Map<string, string[]>();
   for (const file of files) {
+    const dir = path.dirname(file);
+    const existing = byDir.get(dir) ?? [];
+    existing.push(file);
+    byDir.set(dir, existing);
+  }
+  const out: SkillDef[] = [];
+  for (const [dir, skillFiles] of byDir.entries()) {
+    const hasSkillMd = skillFiles.some((file) => path.basename(file) === 'SKILL.md');
+    const hasSkillTpl = skillFiles.some((file) => path.basename(file) === 'SKILL.tpl.md');
+    if (hasSkillMd && hasSkillTpl) throw new Error(`skill dir cannot contain both SKILL.md and SKILL.tpl.md: ${dir}`);
+    const file = skillFiles.find((entry) => {
+      const base = path.basename(entry);
+      return base === 'SKILL.md' || base === 'SKILL.tpl.md';
+    });
+    if (!file) continue;
     const id = normalizeDefinitionId('skill', path.basename(path.dirname(file)));
     const raw = await readFile(file, 'utf8');
     if (!raw.startsWith('+++')) throw new Error(`skill frontmatter must start with +++ at byte 0: ${file}`);
     const closingIndex = raw.indexOf('\n+++\n', 3);
     if (closingIndex < 0) throw new Error(`missing closing +++ delimiter: ${file}`);
     const frontmatter = skillSchema.parse(parseTomlOrThrow(file, raw.slice(4, closingIndex + 1)));
-    out.push({ pack: packId, packRoot: root, id, name: frontmatter.name, description: frontmatter.description, body: raw.slice(closingIndex + 5), frontmatter, assets: frontmatter.assets ?? [], sourcePath: file, sourceName: path.relative(root, file) });
+    out.push({
+      pack: packId,
+      packRoot: root,
+      id,
+      name: frontmatter.name,
+      description: frontmatter.description,
+      body: raw.slice(closingIndex + 5),
+      bodyIsTemplate: path.basename(file) === 'SKILL.tpl.md',
+      frontmatter,
+      assets: frontmatter.assets ?? [],
+      sourcePath: file,
+      sourceName: path.relative(root, file)
+    });
   }
   mapId(out, 'skill');
   return out;

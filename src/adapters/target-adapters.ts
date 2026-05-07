@@ -1,6 +1,7 @@
 import path from 'node:path';
 
 import type { RuntimeConfig, SkillAssetConfig } from '../core/config-model.js';
+import { renderVendorTemplate } from '../core/template.js';
 import type { Kind, ManagedInventoryEntry, Pack, Target } from '../core/types.js';
 import { jsonPathBracketSelector, MANAGED_JSONC_WARNING, MANAGED_TOML_WARNING, sha256, tomlQuotedKeySegment } from '../core/util.js';
 
@@ -44,6 +45,13 @@ function toTomlValue(value: unknown): string {
   throw new Error(`unsupported vendor config value type: ${typeof value}`);
 }
 
+function toTomlMultilineBasicString(value: string): string {
+  const escaped = value
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"');
+  return `"""\n${escaped}"""`;
+}
+
 export function vendorManifestRelPath(target: Target, kind: Kind): string {
   if (target === 'claude') return '.claude/.rac-install-manifest.json';
   if (target === 'opencode') return '.opencode/.rac-install-manifest.json';
@@ -69,14 +77,16 @@ function claudeAdapter(): TargetAdapter {
           agent.vendor.claudeConfig,
           `agent ${agent.id} vendor.claude.config`
         );
-        const content = textManagedPayload(frontmatter, agent.instructions);
+        const instructions = agent.instructionsIsTemplate ? renderVendorTemplate(agent.instructions, 'claude', `agent ${agent.id}`) : agent.instructions;
+        const content = textManagedPayload(frontmatter, instructions);
         const relPath = `.claude/agents/${agent.id}.md`;
         outputs.push({ pack: agent.pack, target: 'claude', kind: 'agent', id: agent.id, source: agent.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('claude', 'agent'), inventory: [{ version: 1, format: 'markdown', selector: '$' }], content, hash: sha256(content), isJson: false });
       }
 
       for (const skill of config.skills) {
         const frontmatter = skill.claudeFrontmatter ?? skill.frontmatter;
-        const content = textManagedPayload(frontmatter, skill.body);
+        const body = skill.bodyIsTemplate ? renderVendorTemplate(skill.body, 'claude', `skill ${skill.id}`) : skill.body;
+        const content = textManagedPayload(frontmatter, body);
         const relPath = `.claude/skills/${skill.id}/SKILL.md`;
         outputs.push({ pack: skill.pack, target: 'claude', kind: 'skill', id: skill.id, source: skill.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('claude', 'skill'), inventory: [{ version: 1, format: 'markdown', selector: '$' }], content, hash: sha256(content), isJson: false });
         for (const asset of skill.assets) {
@@ -134,32 +144,29 @@ function codexAdapter(): TargetAdapter {
       const outputs: AdapterOutput[] = [];
 
       for (const agent of config.agents) {
-        const frontmatter = mergeGeneratedWithVendor(
-          { name: agent.id, description: agent.description ?? agent.name ?? agent.id },
-          agent.vendor.codexConfig,
-          `agent ${agent.id} vendor.codex.config`
-        );
-        if (agent.vendor.codexEmitInstructionOnly) {
-          const content = textManagedPayload(frontmatter, agent.instructions);
-          const relPath = `.codex/agents/${agent.id}.md`;
-          outputs.push({ pack: agent.pack, target: 'codex', kind: 'agent', id: agent.id, source: agent.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('codex', 'agent'), inventory: [{ version: 1, format: 'markdown', selector: '$' }], content, hash: sha256(content), isJson: false });
-        } else {
-          const generated: Record<string, unknown> = {
-            name: agent.id,
-            description: agent.description ?? agent.name ?? agent.id,
-            developer_instructions: agent.instructions
-          };
-          const merged = mergeGeneratedWithVendor(generated, agent.vendor.codexConfig, `agent ${agent.id} vendor.codex.config`);
-          const lines = [MANAGED_TOML_WARNING];
-          for (const [key, value] of Object.entries(merged)) lines.push(`${key} = ${toTomlValue(value)}`);
-          const content = `${lines.join('\n')}\n`;
-          const relPath = `.codex/agents/${agent.id}.toml`;
-          outputs.push({ pack: agent.pack, target: 'codex', kind: 'agent', id: agent.id, source: agent.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('codex', 'agent'), inventory: [{ version: 1, format: 'toml', selector: '$' }], content, hash: sha256(content), isJson: false });
+        const instructions = agent.instructionsIsTemplate ? renderVendorTemplate(agent.instructions, 'codex', `agent ${agent.id}`) : agent.instructions;
+        const generated: Record<string, unknown> = {
+          name: agent.id,
+          description: agent.description ?? agent.name ?? agent.id,
+          developer_instructions: instructions
+        };
+        const merged = mergeGeneratedWithVendor(generated, agent.vendor.codexConfig, `agent ${agent.id} vendor.codex.config`);
+        const lines = [MANAGED_TOML_WARNING];
+        for (const [key, value] of Object.entries(merged)) {
+          if (key === 'developer_instructions' && typeof value === 'string') {
+            lines.push(`${key} = ${toTomlMultilineBasicString(value)}`);
+          } else {
+            lines.push(`${key} = ${toTomlValue(value)}`);
+          }
         }
+        const content = `${lines.join('\n')}\n`;
+        const relPath = `.codex/agents/${agent.id}.toml`;
+        outputs.push({ pack: agent.pack, target: 'codex', kind: 'agent', id: agent.id, source: agent.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('codex', 'agent'), inventory: [{ version: 1, format: 'toml', selector: '$' }], content, hash: sha256(content), isJson: false });
       }
 
       for (const skill of config.skills) {
-        const content = textManagedPayload(skill.codexFrontmatter ?? skill.frontmatter, skill.body);
+        const body = skill.bodyIsTemplate ? renderVendorTemplate(skill.body, 'codex', `skill ${skill.id}`) : skill.body;
+        const content = textManagedPayload(skill.codexFrontmatter ?? skill.frontmatter, body);
         const relPath = `.agents/skills/${skill.id}/SKILL.md`;
         outputs.push({ pack: skill.pack, target: 'codex', kind: 'skill', id: skill.id, source: skill.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('codex', 'skill'), inventory: [{ version: 1, format: 'markdown', selector: '$' }], content, hash: sha256(content), isJson: false });
         for (const asset of skill.assets) {
@@ -228,13 +235,15 @@ function opencodeAdapter(): TargetAdapter {
           agent.vendor.opencodeConfig,
           `agent ${agent.id} vendor.opencode.config`
         );
-        const content = textManagedPayload(frontmatter, agent.instructions);
+        const instructions = agent.instructionsIsTemplate ? renderVendorTemplate(agent.instructions, 'opencode', `agent ${agent.id}`) : agent.instructions;
+        const content = textManagedPayload(frontmatter, instructions);
         const relPath = `.opencode/agents/${agent.id}.md`;
         outputs.push({ pack: agent.pack, target: 'opencode', kind: 'agent', id: agent.id, source: agent.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('opencode', 'agent'), inventory: [{ version: 1, format: 'markdown', selector: '$' }], content, hash: sha256(content), isJson: false });
       }
 
       for (const skill of config.skills) {
-        const content = textManagedPayload(skill.opencodeFrontmatter ?? skill.frontmatter, skill.body);
+        const body = skill.bodyIsTemplate ? renderVendorTemplate(skill.body, 'opencode', `skill ${skill.id}`) : skill.body;
+        const content = textManagedPayload(skill.opencodeFrontmatter ?? skill.frontmatter, body);
         const relPath = `.opencode/skills/${skill.id}/SKILL.md`;
         outputs.push({ pack: skill.pack, target: 'opencode', kind: 'skill', id: skill.id, source: skill.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('opencode', 'skill'), inventory: [{ version: 1, format: 'markdown', selector: '$' }], content, hash: sha256(content), isJson: false });
         for (const asset of skill.assets) {
