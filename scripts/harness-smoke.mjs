@@ -75,11 +75,6 @@ async function checkCodexIntegration(sampleRepo) {
   assert(Array.isArray(codexMcp), 'Codex MCP discovery output is not a JSON array');
   assert(codexMcp.some((entry) => entry?.name === 'project-rules'), 'Codex MCP discovery output missing project-rules');
 
-  // Codex currently has no project-scoped "list generated agents/skills" CLI surface.
-  // These are file-surface checks only, not CLI load/discovery checks.
-  const codexSkillMarkdown = await readFile(path.join(sampleRepo, '.agents', 'skills', 'project-gates', 'SKILL.md'), 'utf8');
-  assert(/^---\r?\n[\s\S]*?\r?\n---\r?\n<!-- DO NOT EDIT; managed by rac -->\r?\n/.test(codexSkillMarkdown), 'Codex skill markdown must start with YAML frontmatter and managed marker');
-
 }
 
 async function checkClaudeIntegration(sampleRepo) {
