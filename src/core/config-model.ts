@@ -156,7 +156,7 @@ export async function buildRuntimeConfig(input: BuildRuntimeConfigInput): Promis
     }
 
     const codexEmit = (agent.vendor?.codex as { emit?: unknown } | undefined)?.emit;
-    if (codexEmit !== undefined) throw new Error(`agent ${agent.id} uses unsupported field: vendor.codex.emit`);
+    if (codexEmit !== undefined) throw new Error(`agent ${agent.id} uses removed API: vendor.codex.emit`);
     const opencodeLegacyTools = Boolean((agent.vendor?.opencode as { tools?: unknown } | undefined)?.tools);
     const claudeConfig = targetVendorMap(agent.vendor, 'claude', 'config');
     const codexConfig = targetVendorMap(agent.vendor, 'codex', 'config');

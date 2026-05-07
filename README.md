@@ -79,7 +79,7 @@ Vendor overrides:
 - Skills merge order is generated base -> `vendor.<target>.config` -> `vendor.<target>.frontmatter`.
 - Generated-key collisions fail fast (for example `name`, `description`).
 - Skill installs fail fast when `vendor.<target>.config` and `vendor.<target>.frontmatter` share keys.
-- Agents fail fast on unsupported `vendor.codex.emit` (hard-removed).
+- Agents fail fast when removed APIs such as `vendor.codex.emit` are present.
 - Codex TOML pass-through values must be strings, numbers, booleans, or arrays; nested objects are rejected.
 
 ### Definition File Examples

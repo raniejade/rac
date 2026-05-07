@@ -1058,7 +1058,7 @@ describe('install + doctor', () => {
       'id = "reviewer"\ninstructions = "inline"\n[vendor.codex]\nemit = "instruction-only"\n',
       'utf8'
     );
-    await expect(install({ cwd: root, targets: ['codex'], kinds: ['agent'] })).rejects.toThrow('uses unsupported field: vendor.codex.emit');
+    await expect(install({ cwd: root, targets: ['codex'], kinds: ['agent'] })).rejects.toThrow('uses removed API: vendor.codex.emit');
 
     await mkdir(path.join(root, '.rac/skills/s1'), { recursive: true });
     await writeFile(

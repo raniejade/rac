@@ -59,7 +59,8 @@ Responsibilities:
 - `vendor.<target>.frontmatter` for skill markdown frontmatter overlays
 - skill frontmatter merge order is `base generated/frontmatter -> vendor.<target>.config -> vendor.<target>.frontmatter`
 - skill overlay maps cannot collide with generated keys (`name`, `description`) and cannot duplicate keys across `config` + `frontmatter`
-- Enforce collision rules for generated keys and unsupported fields (for example `vendor.codex.emit`)
+- Enforce generated-key collision rules
+- Reject removed APIs; `vendor.codex.emit` no longer exists
 - Collect config warnings as runtime signals
 
 Non-responsibilities:
