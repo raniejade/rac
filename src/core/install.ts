@@ -209,7 +209,7 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
     for (const record of manifest.records) ownedRelPaths.add(record.relPath);
   }
 
-  const packs = await resolvePacks(options.cwd);
+  const packs = await resolvePacks(options.cwd, { refresh: options.refreshPacks });
   const parsedAgents = [] as Awaited<ReturnType<typeof loadAgents>>;
   const parsedSkills = [] as Awaited<ReturnType<typeof loadSkills>>;
   const parsedMcps = [] as Awaited<ReturnType<typeof loadMcps>>;

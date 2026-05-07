@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdir, readFile, stat } from 'node:fs/promises';
+import { mkdir, readFile, rm, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -69,7 +69,7 @@ async function runGit(args: string[], cwd?: string): Promise<void> {
   });
 }
 
-async function ensureSharedPack(spec: PackSpec): Promise<PackRuntime> {
+async function ensureSharedPack(spec: PackSpec, opts: { refresh?: boolean } = {}): Promise<PackRuntime> {
   validatePackSpec(spec);
   const gitUrl = repoToGitUrl(spec.repo);
   const key = `${spec.repo}@${spec.ref}`;
@@ -77,14 +77,16 @@ async function ensureSharedPack(spec: PackSpec): Promise<PackRuntime> {
   const repoDir = path.join(cacheRoot(), 'packs', keyHash);
   await mkdir(path.dirname(repoDir), { recursive: true });
 
+  if (opts.refresh) await rm(repoDir, { recursive: true, force: true });
+
   try {
     await stat(path.join(repoDir, '.git'));
   } catch {
     await runGit(['clone', gitUrl, repoDir]);
   }
 
-  await runGit(['fetch', '--all', '--tags'], repoDir);
-  await runGit(['checkout', '--detach', spec.ref], repoDir);
+  await runGit(['fetch', '--force', '--tags', 'origin', spec.ref], repoDir);
+  await runGit(['checkout', '--detach', 'FETCH_HEAD'], repoDir);
 
   const root = path.join(repoDir, '.rac');
   await loadSharedPackConfig(root);
@@ -129,14 +131,14 @@ export async function loadSharedPackConfig(root: string): Promise<void> {
   if (parsed.packs !== undefined) throw new Error(`shared pack config cannot contain [[packs]]: ${configPath}`);
 }
 
-export async function resolvePacks(cwd: string): Promise<PackRuntime[]> {
+export async function resolvePacks(cwd: string, opts: { refresh?: boolean } = {}): Promise<PackRuntime[]> {
   const projectRoot = path.join(cwd, '.rac');
   const configPath = path.join(projectRoot, 'config.toml');
   try { await stat(configPath); } catch { throw new Error(`missing required config: ${configPath}`); }
 
   const project = await loadProjectPackConfig(projectRoot);
   const out: PackRuntime[] = [{ id: 'project', root: projectRoot }];
-  for (const spec of project.packs) out.push(await ensureSharedPack(spec));
+  for (const spec of project.packs) out.push(await ensureSharedPack(spec, opts));
   return out;
 }
 

@@ -52,7 +52,8 @@ program.command('install')
   .option('--clean', 'delete stale files tracked by manifest for selected kind/target')
   .option('--check', 'verify generated outputs/manifests are up to date without writing')
   .option('--force', 'override unmanaged files')
-  .action(async (opts: { target?: string; kind?: string; dryRun?: boolean; clean?: boolean; check?: boolean; force?: boolean }) => {
+  .option('--refresh-packs', 'force re-clone of shared pack caches before installing')
+  .action(async (opts: { target?: string; kind?: string; dryRun?: boolean; clean?: boolean; check?: boolean; force?: boolean; refreshPacks?: boolean }) => {
     const result = await install({
       targets: normalizeTargets(opts.target),
       kinds: normalizeKinds(opts.kind),
@@ -60,6 +61,7 @@ program.command('install')
       clean: !!opts.clean,
       check: !!opts.check,
       force: !!opts.force,
+      refreshPacks: !!opts.refreshPacks,
       cwd: process.cwd()
     });
     console.log(`create:\n${result.create.join('\n') || '-'}`);
