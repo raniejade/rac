@@ -49,6 +49,12 @@ function startsWithManagedLine(content: string, warning: string): boolean {
   return content.startsWith(`${warning}\n`) || content.startsWith(`${warning}\r\n`);
 }
 
+function hasCanonicalManagedMarkdown(content: string): boolean {
+  const escapedWarning = MANAGED_MARKDOWN_WARNING.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(`^---\\r?\\n[\\s\\S]*?\\r?\\n---\\r?\\n${escapedWarning}(?:\\r?\\n|$)`);
+  return pattern.test(content);
+}
+
 async function canOverwrite(filePath: string, ownedRelPaths: Set<string>, relPath: string, force: boolean, strictJson: boolean): Promise<boolean> {
   if (!(await exists(filePath))) return true;
   if (force) return true;
@@ -58,7 +64,7 @@ async function canOverwrite(filePath: string, ownedRelPaths: Set<string>, relPat
   const existing = await readFile(filePath, 'utf8');
   if (startsWithManagedLine(existing, MANAGED_TOML_WARNING)) return true;
   if (startsWithManagedLine(existing, MANAGED_JSONC_WARNING)) return true;
-  if (existing.includes(MANAGED_MARKDOWN_WARNING)) return true;
+  if (hasCanonicalManagedMarkdown(existing)) return true;
   return LEGACY_MARKERS.some((marker) => existing.includes(marker));
 }
 
@@ -524,9 +530,6 @@ export async function doctor(cwd: string, targets: ('claude' | 'codex' | 'openco
   }
 
   if (kinds.includes('agent')) {
-    if (targets.includes('codex')) {
-      warnings.push(...config.warnings.filter((warning) => warning.code === 'codex_instruction_only').map((warning) => warning.message));
-    }
     if (targets.includes('opencode')) {
       warnings.push(...config.warnings.filter((warning) => warning.code === 'opencode_legacy_tools').map((warning) => warning.message));
     }

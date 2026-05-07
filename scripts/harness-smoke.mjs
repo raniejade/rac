@@ -124,6 +124,11 @@ async function main() {
       throw new Error('Codex reviewer agent TOML still uses legacy id/instructions fields');
     }
 
+    const codexSkillMarkdown = await readFile(path.join(sampleRepo, '.agents', 'skills', 'project-gates', 'SKILL.md'), 'utf8');
+    if (!/^---\r?\n[\s\S]*?\r?\n---\r?\n<!-- DO NOT EDIT; managed by rac -->\r?\n/.test(codexSkillMarkdown)) {
+      throw new Error('Codex skill markdown must start with YAML frontmatter and place managed marker immediately after it');
+    }
+
     console.log('harness smoke: ok');
   } catch (error) {
     console.error('harness smoke: failed');

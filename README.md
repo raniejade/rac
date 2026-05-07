@@ -79,7 +79,7 @@ Vendor overrides:
 - Skills merge order is generated base -> `vendor.<target>.config` -> `vendor.<target>.frontmatter`.
 - Generated-key collisions fail fast (for example `name`, `description`).
 - Skill installs fail fast when `vendor.<target>.config` and `vendor.<target>.frontmatter` share keys.
-- Agents fail fast when `vendor.codex.emit = "instruction-only"` is combined with `vendor.codex.config`.
+- Agents fail fast on unsupported `vendor.codex.emit` (hard-removed).
 - Codex TOML pass-through values must be strings, numbers, booleans, or arrays; nested objects are rejected.
 
 ### Definition File Examples
@@ -93,15 +93,12 @@ description = "Review pull requests"
 instructions = "Review changes and report risks first."
 tools = ["git", "rg"]
 
-[vendor.codex]
-emit = "instruction-only"
-
 [vendor.claude.config]
 model = "sonnet"
 ```
 
 - `instructions` can be inline text or a relative file path like `./instructions/reviewer.md`.
-- If `vendor.codex.emit = "instruction-only"`, do not set `vendor.codex.config` for that agent.
+- Agent instruction templates are opt-in via file suffix: `.tpl.md` or `.tpl.txt`.
 
 Skill definition (`.rac/skills/<id>/SKILL.md`):
 
@@ -120,6 +117,10 @@ audience = "maintainers"
 
 Run the release checklist and report blocking issues.
 ```
+
+- Skills may use either `SKILL.md` or `SKILL.tpl.md` (not both in one directory).
+- Template scope is limited to booleans: `vendor.claude`, `vendor.codex`, `vendor.opencode`.
+- Unknown template variables/filters fail fast; includes/partials are not supported.
 
 - Frontmatter is TOML between the opening/closing `+++` delimiters, then the skill body.
 - Assets are resolved relative to the skill directory and copied with the installed skill.
@@ -190,7 +191,6 @@ rac doctor [--target claude,codex,opencode] [--kind agent,skill,mcp,rule]
 
 - Prints `ok` when no warnings are found.
 - Warns for missing MCP env vars.
-- Warns for Codex instruction-only emit when `--target` includes `codex` and `--kind` includes `agent`.
 - Warns for legacy OpenCode vendor tools when `--target` includes `opencode` and `--kind` includes `agent`.
 
 ### `install`
@@ -211,7 +211,9 @@ Defaults: omitting `--target` applies all targets; omitting `--kind` applies all
 Without `--force`, overwrite rules are:
 
 - allowed: manifest-owned files
-- allowed: text files containing RAC managed/frontmatter-sensitive markers
+- allowed: TOML/JSONC files with RAC managed warning at byte 0
+- allowed: markdown files with YAML frontmatter at byte 0 and RAC managed marker immediately after the closing frontmatter
+- allowed: legacy frontmatter-sensitive markers (backward safety path)
 - blocked: unmanaged JSON files
 - blocked: other unmanaged files without markers
 
@@ -266,9 +268,7 @@ Manifest behavior:
 
 ### Codex
 
-- Agents:
-  - default: `.codex/agents/<id>.toml`
-  - if `vendor.codex.emit = "instruction-only"`: `.codex/agents/<id>.md`
+- Agents: `.codex/agents/<id>.toml`
 - Skills: `.agents/skills/<id>/SKILL.md` + skill assets
 - MCP: `.codex/config.toml`
 - Codex MCP entries are emitted as quoted table keys (for example `[mcp_servers."id.with spaces"]`).

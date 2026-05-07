@@ -9,6 +9,7 @@ export type AgentDef = {
   name?: string;
   description?: string;
   instructions: string;
+  instructionsIsTemplate?: boolean;
   tools?: string[];
   vendor?: Record<string, unknown>;
   sourcePath: string;
@@ -22,6 +23,7 @@ export type SkillDef = {
   name?: string;
   description: string;
   body: string;
+  bodyIsTemplate?: boolean;
   frontmatter: Record<string, unknown>;
   assets: string[];
   sourcePath: string;

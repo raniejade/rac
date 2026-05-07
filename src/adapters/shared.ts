@@ -14,5 +14,7 @@ function toYaml(frontmatter: Record<string, unknown>): string {
 }
 
 export function textManagedPayload(frontmatter: Record<string, unknown>, body: string): string {
-  return `---\n${toYaml(frontmatter)}\n---\n${MANAGED_MARKDOWN_WARNING}\n\n${body}`;
+  // Claude/Codex markdown parsers require YAML frontmatter at byte 0, so the RAC marker
+  // must come immediately after the closing frontmatter delimiter (not before frontmatter).
+  return `---\n${toYaml(frontmatter)}\n---\n${MANAGED_MARKDOWN_WARNING}\n${body}`;
 }

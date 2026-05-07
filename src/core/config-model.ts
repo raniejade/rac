@@ -6,7 +6,7 @@ import type { AgentDef, McpDef, Pack, RuleDef, SkillDef } from './types.js';
 import { assertNoTraversal, rel } from './util.js';
 
 export type ConfigWarning = {
-  code: 'codex_instruction_only' | 'opencode_legacy_tools';
+  code: 'opencode_legacy_tools';
   message: string;
 };
 
@@ -22,11 +22,11 @@ export type AgentConfig = {
   name?: string;
   description?: string;
   instructions: string;
+  instructionsIsTemplate: boolean;
   tools: string[];
   source: SourceInfo;
   vendor: {
     raw?: Record<string, unknown>;
-    codexEmitInstructionOnly: boolean;
     opencodeLegacyTools: boolean;
     claudeConfig?: Record<string, unknown>;
     codexConfig?: Record<string, unknown>;
@@ -46,6 +46,7 @@ export type SkillConfig = {
   id: string;
   description: string;
   body: string;
+  bodyIsTemplate: boolean;
   source: SourceInfo;
   frontmatter: Record<string, unknown>;
   claudeFrontmatter?: Record<string, unknown>;
@@ -154,17 +155,13 @@ export async function buildRuntimeConfig(input: BuildRuntimeConfigInput): Promis
       instructions = await readFile(instructionFile, 'utf8');
     }
 
-    const codexEmitInstructionOnly = (agent.vendor?.codex as { emit?: string } | undefined)?.emit === 'instruction-only';
+    const codexEmit = (agent.vendor?.codex as { emit?: unknown } | undefined)?.emit;
+    if (codexEmit !== undefined) throw new Error(`agent ${agent.id} uses unsupported field: vendor.codex.emit`);
     const opencodeLegacyTools = Boolean((agent.vendor?.opencode as { tools?: unknown } | undefined)?.tools);
     const claudeConfig = targetVendorMap(agent.vendor, 'claude', 'config');
     const codexConfig = targetVendorMap(agent.vendor, 'codex', 'config');
     const opencodeConfig = targetVendorMap(agent.vendor, 'opencode', 'config');
 
-    if (codexEmitInstructionOnly && codexConfig) {
-      throw new Error(`agent ${agent.id} cannot combine vendor.codex.emit=instruction-only with vendor.codex.config`);
-    }
-
-    if (codexEmitInstructionOnly) warnings.push({ code: 'codex_instruction_only', message: `codex instruction-only emit configured for agent ${agent.id}` });
     if (opencodeLegacyTools) warnings.push({ code: 'opencode_legacy_tools', message: `opencode vendor tools is legacy for agent ${agent.id}; prefer canonical tools` });
 
     return {
@@ -173,11 +170,11 @@ export async function buildRuntimeConfig(input: BuildRuntimeConfigInput): Promis
       name: agent.name,
       description: agent.description,
       instructions,
+      instructionsIsTemplate: Boolean(agent.instructionsIsTemplate),
       tools: agent.tools ?? [],
       source: sourceInfo(agent.pack, agent.packRoot, agent.sourcePath),
       vendor: {
         raw: agent.vendor,
-        codexEmitInstructionOnly,
         opencodeLegacyTools,
         claudeConfig,
         codexConfig,
@@ -222,6 +219,7 @@ export async function buildRuntimeConfig(input: BuildRuntimeConfigInput): Promis
       id: skill.id,
       description: skill.description,
       body: skill.body,
+      bodyIsTemplate: Boolean(skill.bodyIsTemplate),
       source: sourceInfo(skill.pack, skill.packRoot, skill.sourcePath),
       frontmatter: baseFrontmatter,
       claudeFrontmatter: (claudeConfig || claudeFrontmatter) ? { ...baseFrontmatter, ...(claudeConfig ?? {}), ...(claudeFrontmatter ?? {}) } : undefined,
