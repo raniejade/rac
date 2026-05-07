@@ -138,6 +138,34 @@ function claudeAdapter(): TargetAdapter {
 }
 
 function codexAdapter(): TargetAdapter {
+  function starlarkString(value: string): string {
+    return JSON.stringify(value);
+  }
+
+  function starlarkStringList(values: string[]): string {
+    return `[${values.map(starlarkString).join(', ')}]`;
+  }
+
+  function expandRulePattern(pattern: Array<string | string[]>): string[][] {
+    return pattern
+      .map((segment) => Array.isArray(segment) ? segment : [segment])
+      .reduce<string[][]>((acc, options) => {
+        const next: string[][] = [];
+        for (const base of acc) for (const option of options) next.push([...base, option]);
+        return next;
+      }, [[]]);
+  }
+
+  function renderCodexPrefixRule(pattern: string[], tool: { decision: string; justification: string }): string {
+    return [
+      'prefix_rule(',
+      `  pattern = ${starlarkStringList(pattern)},`,
+      `  decision = ${starlarkString(tool.decision)},`,
+      `  justification = ${starlarkString(tool.justification)},`,
+      ')'
+    ].join('\n');
+  }
+
   return {
     target: 'codex',
     plan(config) {
@@ -206,12 +234,14 @@ function codexAdapter(): TargetAdapter {
           const lines = [MANAGED_TOML_WARNING];
           for (const rule of [...sourceRules].sort((a, b) => a.id.localeCompare(b.id))) {
             const tool = rule.tools[0];
-            lines.push(`prefix_rule(${JSON.stringify(tool.pattern)}, ${JSON.stringify(tool.decision)}, ${JSON.stringify(tool.justification)}, ${tool.appendWildcard ? 'true' : 'false'})`);
+            for (const pattern of expandRulePattern(tool.pattern)) {
+              lines.push(renderCodexPrefixRule(pattern, tool));
+            }
           }
           const content = `${lines.join('\n')}\n`;
           const [, source] = sourceKey.split('::', 2);
-          const sourceFile = path.basename(source);
-          const relPath = `.codex/rules/${sourceFile}.rules`;
+          const sourceFile = `${path.basename(source, path.extname(source))}.rules`;
+          const relPath = `.codex/rules/${sourceFile}`;
           for (const rule of sourceRules) {
             outputs.push({ pack: rule.pack, target: 'codex', kind: 'rule', id: rule.id, source: rule.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('codex', 'rule'), inventory: [{ version: 1, format: 'file', selector: '$' }], content, hash: sha256(content), isJson: false });
           }

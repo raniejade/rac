@@ -34,6 +34,16 @@ function assert(condition, message) {
 }
 
 async function checkCodexIntegration(sampleRepo) {
+  const codexPolicyCheck = await spawnCapture(
+    'codex',
+    ['execpolicy', 'check', '--pretty', '--rules', path.join(sampleRepo, '.codex', 'rules', 'wrapper-deny.rules'), '--', 'git', 'push'],
+    sampleRepo,
+    { ...process.env, HOME: sampleRepo }
+  );
+  assert(codexPolicyCheck.code === 0, `Codex execpolicy check failed with code ${codexPolicyCheck.code}\nstdout:\n${codexPolicyCheck.stdout}\nstderr:\n${codexPolicyCheck.stderr}`);
+  const codexPolicy = JSON.parse(codexPolicyCheck.stdout);
+  assert(codexPolicy.decision === 'forbidden', `Codex execpolicy did not apply generated deny rule\nstdout:\n${codexPolicyCheck.stdout}\nstderr:\n${codexPolicyCheck.stderr}`);
+
   const codexMcpList = await spawnCapture(
     'codex',
     ['mcp', 'list', '--json'],
@@ -44,9 +54,15 @@ async function checkCodexIntegration(sampleRepo) {
   const codexMcp = JSON.parse(codexMcpList.stdout);
   assert(Array.isArray(codexMcp), 'Codex MCP discovery output is not a JSON array');
   assert(codexMcp.some((entry) => entry?.name === 'project-rules'), 'Codex MCP discovery output missing project-rules');
-  // Codex CLI currently has no stable non-interactive surface in this harness to
-  // prove generated project agents/skills are loaded. We do not claim integration
-  // verification for those surfaces here.
+
+  const codexPromptInput = await spawnCapture(
+    'codex',
+    ['debug', 'prompt-input', 'smoke'],
+    sampleRepo,
+    { ...process.env, HOME: sampleRepo }
+  );
+  assert(codexPromptInput.code === 0, `Codex prompt input load failed with code ${codexPromptInput.code}\nstdout:\n${codexPromptInput.stdout}\nstderr:\n${codexPromptInput.stderr}`);
+  assert(codexPromptInput.stdout.includes('project-gates'), 'Codex prompt input missing project-gates skill');
 }
 
 async function checkClaudeIntegration(sampleRepo) {

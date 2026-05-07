@@ -291,6 +291,7 @@ Manifest behavior:
 - Agents: `.codex/agents/<id>.toml`
 - Skills: `.agents/skills/<id>/SKILL.md` + skill assets
 - MCP: `.codex/config.toml`
+- Rules: `.codex/rules/<source-file-stem>.rules`
 - Codex MCP entries are emitted as quoted table keys (for example `[mcp_servers."id.with spaces"]`).
 - Install manifests:
   - agents + mcps: `.codex/.rac-install-manifest.json`

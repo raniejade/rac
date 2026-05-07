@@ -81,7 +81,7 @@ Current adapters:
 
 Rule output semantics:
 
-- Codex: `.codex/rules/<source-file>.rules` with `prefix_rule(...)` calls (one per RAC rule), preserving nested alternatives in `pattern`.
+- Codex: `.codex/rules/<source-file-stem>.rules` with `prefix_rule(...)` calls (one per expanded command prefix).
 - Claude: `.claude/settings.json` -> `permissions.deny` entries expanded from alternatives using `Bash(...)`.
 - OpenCode: `.opencode/opencode.jsonc` -> `permission.bash` object entries expanded from alternatives (`{ "<command pattern>": "deny" }`).
 - `append_wildcard` defaults to `true`; when true, adapters append trailing ` *` in string-expanded deny entries.
@@ -118,7 +118,7 @@ Responsibilities:
 - Build a full plan by combining selected kinds + targets
 - Apply overwrite guardrails (`canOverwrite`) with managed-file checks
 - Detect planned-output path collisions and fail when colliding records produce different content
-- Fail fast on Codex rule flat-path collisions when distinct source groups (pack + source relPath) resolve to the same `.codex/rules/<source-file>.rules` target, even if generated content hashes match
+- Fail fast on Codex rule flat-path collisions when distinct source groups (pack + source relPath) resolve to the same `.codex/rules/<source-file-stem>.rules` target, even if generated content hashes match
 - Write files (content or asset copy) exactly once per destination path
 - Optionally clean stale managed outputs
 - Persist vendor-local install manifests per target/kind:

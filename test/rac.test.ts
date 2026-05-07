@@ -561,10 +561,32 @@ describe('install + doctor', () => {
 
     await install({ cwd: root, targets: ['claude', 'codex', 'opencode'], kinds: ['mcp', 'rule'] });
 
-    const codexRules = await readFile(path.join(root, '.codex/rules/wrappers.toml.rules'), 'utf8');
+    const codexRules = await readFile(path.join(root, '.codex/rules/wrappers.rules'), 'utf8');
     expect(codexRules.startsWith(`${MANAGED_TOML_WARNING}\n`)).toBe(true);
-    expect(codexRules).toContain('prefix_rule([');
-    expect(codexRules).toContain('["gh",["pr","issue"],"merge"]');
+    expect(codexRules).toContain([
+      'prefix_rule(',
+      '  pattern = ["gh", "pr", "merge"],',
+      '  decision = "forbidden",',
+      '  justification = "Use wrapper",',
+      ')'
+    ].join('\n'));
+    expect(codexRules).toContain([
+      'prefix_rule(',
+      '  pattern = ["gh", "issue", "merge"],',
+      '  decision = "forbidden",',
+      '  justification = "Use wrapper",',
+      ')'
+    ].join('\n'));
+    expect(codexRules).toContain([
+      'prefix_rule(',
+      '  pattern = ["git", "push"],',
+      '  decision = "forbidden",',
+      '  justification = "Use wrapper",',
+      ')'
+    ].join('\n'));
+    expect(codexRules).not.toContain('append_wildcard');
+    expect(codexRules).not.toContain('true');
+    expect(codexRules).not.toContain('false');
 
     const claudeSettings = JSON.parse(await readFile(path.join(root, '.claude/settings.json'), 'utf8')) as { permissions: { deny: string[] } };
     expect(claudeSettings.permissions.deny).toContain('Bash(gh pr merge *)');
@@ -1164,7 +1186,8 @@ describe('install + doctor', () => {
     const root = await makeTmp();
     await seed(root);
     await install({ cwd: root, targets: ['codex'], kinds: ['rule'] });
-    await expect(stat(path.join(root, '.codex/rules/wrappers.toml.rules'))).resolves.toBeTruthy();
+    await expect(stat(path.join(root, '.codex/rules/wrappers.rules'))).resolves.toBeTruthy();
+    await expect(stat(path.join(root, '.codex/rules/wrappers.toml.rules'))).rejects.toThrow();
   });
 
   it('fails codex install on shared-pack flat rule path collision before writing output', async () => {
@@ -1199,7 +1222,7 @@ describe('install + doctor', () => {
       spawnSync('git', ['clone', remote, cachedRepo]);
 
       await expect(install({ cwd: root, targets: ['codex'], kinds: ['rule'] })).rejects.toThrow('codex rule flat-path collision');
-      await expect(stat(path.join(root, '.codex/rules/wrappers.toml.rules'))).rejects.toThrow();
+      await expect(stat(path.join(root, '.codex/rules/wrappers.rules'))).rejects.toThrow();
     } finally {
       delete process.env.RAC_CACHE_DIR;
     }
