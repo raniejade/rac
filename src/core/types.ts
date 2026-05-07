@@ -89,6 +89,7 @@ export type InstallOptions = {
   clean?: boolean;
   check?: boolean;
   force?: boolean;
+  refreshPacks?: boolean;
   cwd: string;
 };
 
