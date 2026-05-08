@@ -1,91 +1,23 @@
 #!/usr/bin/env node
 /* global console, process */
-import { mkdtemp, access, mkdir, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, access, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawn } from 'node:child_process';
+
+import { parse as parseToml } from 'smol-toml';
+
+import { checkClaudeProject, checkClaudeUser } from './harness/claude.mjs';
+import { checkCodexProject, checkCodexUser } from './harness/codex.mjs';
+import { assert, makeRunCli } from './harness/lib.mjs';
+import { checkOpenCodeProject, checkOpenCodeUser } from './harness/opencode.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
 const cliPath = path.join(repoRoot, 'dist', 'cli.js');
 const keepTemp = process.env.RAC_HARNESS_KEEP === '1';
 
-async function spawnCapture(command, args, cwd, env = undefined) {
-  return await new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd, env: env ?? process.env, stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (chunk) => { stdout += chunk; });
-    child.stderr.on('data', (chunk) => { stderr += chunk; });
-    child.on('error', reject);
-    child.on('close', (code) => resolve({ code: code ?? 1, stdout, stderr }));
-  });
-}
-
-async function runCli(cwd, args) {
-  const result = await spawnCapture(process.execPath, [cliPath, ...args], cwd);
-  if (result.code === 0) return result;
-  throw new Error(`rac ${args.join(' ')} failed with code ${result.code}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
-}
-
-function assert(condition, message) {
-  if (!condition) throw new Error(message);
-}
-
-async function checkCodexIntegration(sampleRepo) {
-  const codexPolicyCheck = await spawnCapture(
-    'codex',
-    ['execpolicy', 'check', '--pretty', '--rules', path.join(sampleRepo, '.codex', 'rules', 'wrapper-deny.rules'), '--', 'git', 'push'],
-    sampleRepo,
-    { ...process.env, HOME: sampleRepo }
-  );
-  assert(codexPolicyCheck.code === 0, `Codex execpolicy check failed with code ${codexPolicyCheck.code}\nstdout:\n${codexPolicyCheck.stdout}\nstderr:\n${codexPolicyCheck.stderr}`);
-  const codexPolicy = JSON.parse(codexPolicyCheck.stdout);
-  assert(codexPolicy.decision === 'forbidden', `Codex execpolicy did not apply generated deny rule\nstdout:\n${codexPolicyCheck.stdout}\nstderr:\n${codexPolicyCheck.stderr}`);
-
-  const codexMcpList = await spawnCapture(
-    'codex',
-    ['mcp', 'list', '--json'],
-    sampleRepo,
-    { ...process.env, HOME: sampleRepo }
-  );
-  assert(codexMcpList.code === 0, `Codex MCP discovery failed with code ${codexMcpList.code}\nstdout:\n${codexMcpList.stdout}\nstderr:\n${codexMcpList.stderr}`);
-  const codexMcp = JSON.parse(codexMcpList.stdout);
-  assert(Array.isArray(codexMcp), 'Codex MCP discovery output is not a JSON array');
-  assert(codexMcp.some((entry) => entry?.name === 'project-rules'), 'Codex MCP discovery output missing project-rules');
-
-  const codexPromptInput = await spawnCapture(
-    'codex',
-    ['debug', 'prompt-input', 'smoke'],
-    sampleRepo,
-    { ...process.env, HOME: sampleRepo }
-  );
-  assert(codexPromptInput.code === 0, `Codex prompt input load failed with code ${codexPromptInput.code}\nstdout:\n${codexPromptInput.stdout}\nstderr:\n${codexPromptInput.stderr}`);
-  assert(codexPromptInput.stdout.includes('project-gates'), 'Codex prompt input missing project-gates skill');
-}
-
-async function checkClaudeIntegration(sampleRepo) {
-  const claudeMcpList = await spawnCapture('claude', ['mcp', 'list'], sampleRepo);
-  assert(claudeMcpList.code === 0, `Claude MCP discovery failed with code ${claudeMcpList.code}\nstdout:\n${claudeMcpList.stdout}\nstderr:\n${claudeMcpList.stderr}`);
-  assert(/project-rules/.test(`${claudeMcpList.stdout}\n${claudeMcpList.stderr}`), 'Claude MCP discovery output missing project-rules');
-
-  const claudeAgents = await spawnCapture('claude', ['agents', '--setting-sources', 'project'], sampleRepo);
-  assert(claudeAgents.code === 0, `Claude agents discovery failed with code ${claudeAgents.code}\nstdout:\n${claudeAgents.stdout}\nstderr:\n${claudeAgents.stderr}`);
-  assert(/reviewer/.test(`${claudeAgents.stdout}\n${claudeAgents.stderr}`), 'Claude agents output missing reviewer project agent');
-  // Claude CLI has no stable project skills list/load command in this harness.
-  // We do not claim integration verification for Claude skills here.
-}
-
-async function checkOpenCodeIntegration(sampleRepo) {
-  const openCodeList = await spawnCapture(
-    'opencode',
-    ['mcp', 'list', '--pure'],
-    sampleRepo,
-    { ...process.env, XDG_DATA_HOME: path.join(sampleRepo, '.opencode-data') }
-  );
-  assert(openCodeList.code === 0, `OpenCode MCP load/list failed with code ${openCodeList.code}\nstdout:\n${openCodeList.stdout}\nstderr:\n${openCodeList.stderr}`);
-}
+const runCli = makeRunCli(cliPath);
 
 async function checkHarnessOutputs(sampleRepo) {
   // RAC setup sanity only: make sure canonical source layout exists before install.
@@ -93,6 +25,103 @@ async function checkHarnessOutputs(sampleRepo) {
   await stat(path.join(sampleRepo, '.rac', 'skills', 'project-gates', 'SKILL.md'));
   await stat(path.join(sampleRepo, '.rac', 'mcps', 'project-rules.toml'));
   await stat(path.join(sampleRepo, '.rac', 'rules', 'wrapper-deny.toml'));
+}
+
+async function setupProjectScope(sampleRepo) {
+  await mkdir(sampleRepo, { recursive: true });
+
+  await runCli(sampleRepo, ['init']);
+  await writeFile(
+    path.join(sampleRepo, '.rac', 'agents', 'reviewer.toml'),
+    'id = "reviewer"\nname = "Reviewer"\ndescription = "Checks project rules and required gates"\ninstructions = "./reviewer.instructions.md"\n[vendor.codex.config]\nmodel = "gpt-5"\nmodel_reasoning_effort = "high"\nsandbox_mode = "workspace-write"\n',
+    'utf8'
+  );
+
+  await runCli(sampleRepo, ['doctor', '--kind', 'mcp']);
+  await runCli(sampleRepo, ['install', '--target', 'codex']);
+  await runCli(sampleRepo, ['install', '--target', 'claude,opencode']);
+  await runCli(sampleRepo, ['install', '--check']);
+}
+
+async function preSeedUserScope(userHome, xdgConfig) {
+  await mkdir(path.join(userHome, '.codex'), { recursive: true });
+  await mkdir(path.join(userHome, '.claude'), { recursive: true });
+  await mkdir(path.join(xdgConfig, 'opencode'), { recursive: true });
+
+  await writeFile(
+    path.join(userHome, '.codex', 'config.toml'),
+    'approval_policy = "on-failure"\n\n[projects."/Users/me/foo"]\ntrust_level = "trusted"\n',
+    'utf8'
+  );
+  await writeFile(
+    path.join(userHome, '.claude.json'),
+    JSON.stringify({ theme: 'dark', mcpServers: { user_one: { command: 'user-mcp' } } }, null, 2) + '\n',
+    'utf8'
+  );
+  await writeFile(
+    path.join(userHome, '.claude', 'settings.json'),
+    JSON.stringify({ permissions: { deny: ['Bash(rm -rf /)'] } }, null, 2) + '\n',
+    'utf8'
+  );
+  await writeFile(
+    path.join(xdgConfig, 'opencode', 'opencode.jsonc'),
+    JSON.stringify({
+      theme: 'opencode-dark',
+      mcp: { user_oc_mcp: { type: 'local', enabled: true, command: ['user-oc-mcp'] } },
+      permission: { bash: { 'rm -rf /': 'deny' } }
+    }, null, 2) + '\n',
+    'utf8'
+  );
+}
+
+async function assertMergePreservedUserKeys(userHome, xdgConfig) {
+  const codexToml = parseToml(await readFile(path.join(userHome, '.codex', 'config.toml'), 'utf8'));
+  assert(codexToml.approval_policy === 'on-failure', 'codex merge dropped user approval_policy');
+  assert(codexToml.projects?.['/Users/me/foo']?.trust_level === 'trusted', 'codex merge dropped user [projects.*]');
+  assert(codexToml.mcp_servers?.['project-rules'], 'codex merge missing rac mcp entry');
+
+  const claudeJson = JSON.parse(await readFile(path.join(userHome, '.claude.json'), 'utf8'));
+  assert(claudeJson.theme === 'dark', 'claude.json merge dropped user theme');
+  assert(claudeJson.mcpServers?.user_one, 'claude.json merge dropped user mcpServers entry');
+  assert(claudeJson.mcpServers?.['project-rules'], 'claude.json merge missing rac mcp entry');
+
+  const claudeSettings = JSON.parse(await readFile(path.join(userHome, '.claude', 'settings.json'), 'utf8'));
+  assert(claudeSettings.permissions?.deny?.includes('Bash(rm -rf /)'), 'claude settings merge dropped user deny entry');
+  assert(claudeSettings.permissions?.deny?.some((entry) => entry.startsWith('Bash(git push')), 'claude settings merge missing rac deny entry');
+
+  const opencodeRaw = await readFile(path.join(xdgConfig, 'opencode', 'opencode.jsonc'), 'utf8');
+  const opencodeJson = JSON.parse(opencodeRaw.replace(/^\/\/.*\n/, ''));
+  assert(opencodeJson.theme === 'opencode-dark', 'opencode merge dropped user theme');
+  assert(opencodeJson.mcp?.user_oc_mcp, 'opencode merge dropped user mcp entry');
+  assert(opencodeJson.mcp?.['project-rules'], 'opencode merge missing rac mcp entry');
+  assert(opencodeJson.permission?.bash?.['rm -rf /'] === 'deny', 'opencode merge dropped user permission.bash entry');
+  assert(Object.keys(opencodeJson.permission?.bash ?? {}).some((cmd) => cmd.startsWith('git push')), 'opencode merge missing rac permission.bash entry');
+}
+
+async function setupUserScope(tmpRoot, { suffix = '', noMerge = false, preSeed = false } = {}) {
+  const userHome = path.join(tmpRoot, `user-home${suffix}`);
+  const xdgConfig = path.join(userHome, '.config');
+  const cwd = path.join(tmpRoot, `cwd-neutral${suffix}`);
+  await mkdir(userHome, { recursive: true });
+  await mkdir(xdgConfig, { recursive: true });
+  await mkdir(cwd, { recursive: true });
+
+  const env = { ...process.env, RAC_HOME: userHome, XDG_CONFIG_HOME: xdgConfig };
+  await runCli(cwd, ['init', '--scope', 'user'], env);
+  if (preSeed) await preSeedUserScope(userHome, xdgConfig);
+  const installArgs = ['install', '--scope', 'user', ...(noMerge ? ['--no-merge'] : [])];
+  await runCli(cwd, installArgs, env);
+  await runCli(cwd, [...installArgs, '--check'], env);
+
+  // Sanity: outputs landed in the expected user-scope locations.
+  await stat(path.join(userHome, '.codex', 'config.toml'));
+  await stat(path.join(userHome, '.codex', 'rules', 'wrapper-deny.rules'));
+  await stat(path.join(userHome, '.claude.json'));
+  await stat(path.join(userHome, '.claude', 'settings.json'));
+  await stat(path.join(userHome, '.agents', 'skills', 'project-gates', 'SKILL.md'));
+  await stat(path.join(xdgConfig, 'opencode', 'opencode.jsonc'));
+
+  return { userHome, xdgConfig, cwd };
 }
 
 async function main() {
@@ -108,24 +137,22 @@ async function main() {
   const sampleRepo = path.join(tmpRoot, 'sample-repo');
 
   try {
-    await mkdir(sampleRepo, { recursive: true });
-
-    await runCli(sampleRepo, ['init']);
-    await writeFile(
-      path.join(sampleRepo, '.rac', 'agents', 'reviewer.toml'),
-      'id = "reviewer"\nname = "Reviewer"\ndescription = "Checks project rules and required gates"\ninstructions = "./reviewer.instructions.md"\n[vendor.codex.config]\nmodel = "gpt-5"\nmodel_reasoning_effort = "high"\nsandbox_mode = "workspace-write"\n',
-      'utf8'
-    );
-
-    await runCli(sampleRepo, ['doctor', '--kind', 'mcp']);
-    await runCli(sampleRepo, ['install', '--target', 'codex']);
-    await runCli(sampleRepo, ['install', '--target', 'claude,opencode']);
-    await runCli(sampleRepo, ['install', '--check']);
-
+    await setupProjectScope(sampleRepo);
     await checkHarnessOutputs(sampleRepo);
-    await checkCodexIntegration(sampleRepo);
-    await checkClaudeIntegration(sampleRepo);
-    await checkOpenCodeIntegration(sampleRepo);
+    await checkCodexProject(sampleRepo);
+    await checkClaudeProject(sampleRepo);
+    await checkOpenCodeProject(sampleRepo);
+
+    const userScope = await setupUserScope(tmpRoot, { preSeed: true });
+    await assertMergePreservedUserKeys(userScope.userHome, userScope.xdgConfig);
+    await checkCodexUser(userScope);
+    await checkClaudeUser(userScope);
+    await checkOpenCodeUser(userScope);
+
+    const userScopeNoMerge = await setupUserScope(tmpRoot, { suffix: '-nomerge', noMerge: true });
+    await checkCodexUser(userScopeNoMerge);
+    await checkClaudeUser(userScopeNoMerge);
+    await checkOpenCodeUser(userScopeNoMerge);
 
     console.log('harness smoke: ok');
   } catch (error) {

@@ -1,412 +1,17 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
-import os from 'node:os';
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { parse as parseJsonc } from 'jsonc-parser';
 import { parse as parseToml } from 'smol-toml';
-import { describe, expect, it, afterEach } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
-import { adapterFor, TARGET_ADAPTERS } from '../src/adapters/target-adapters.js';
-import { buildRuntimeConfig } from '../src/core/config-model.js';
 import { doctor, initProject, install } from '../src/core/install.js';
-import { addProjectPack, listProjectPacks, removeProjectPack } from '../src/core/pack-config.js';
-import { loadAgents, loadMcps, loadProjectPackConfig, loadRules, loadSharedPackConfig, loadSkills } from '../src/core/parsers.js';
+import { loadProjectPackConfig, loadSharedPackConfig } from '../src/core/parsers.js';
 import { MANAGED_JSONC_WARNING, MANAGED_MARKDOWN_WARNING, MANAGED_TOML_WARNING } from '../src/core/util.js';
 
-const tempDirs: string[] = [];
-let cliBuilt = false;
+import { cleanupTmpDirs, makeTmp, readJsoncFile, seed } from './helpers.js';
 
-async function makeTmp(): Promise<string> {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'rac-'));
-  tempDirs.push(dir);
-  return dir;
-}
-
-async function readJsoncFile<T>(filePath: string): Promise<T> {
-  return parseJsonc(await readFile(filePath, 'utf8')) as T;
-}
-
-function runCli(cwd: string, args: string[]): { status: number | null; stdout: string; stderr: string } {
-  if (!cliBuilt) {
-    const build = spawnSync('npm', ['run', 'build'], { cwd: process.cwd(), encoding: 'utf8' });
-    if (build.status !== 0) throw new Error(`failed building CLI for tests: ${build.stderr || build.stdout}`);
-    cliBuilt = true;
-  }
-  const result = spawnSync('node', [path.join(process.cwd(), 'dist/cli.js'), ...args], { cwd, encoding: 'utf8' });
-  return {
-    status: result.status,
-    stdout: result.stdout,
-    stderr: result.stderr
-  };
-}
-
-afterEach(async () => {
-  for (const dir of tempDirs.splice(0)) {
-    await rm(dir, { recursive: true, force: true });
-  }
-});
-
-async function seed(root: string): Promise<void> {
-  await mkdir(path.join(root, '.rac/agents'), { recursive: true });
-  await mkdir(path.join(root, '.rac/skills/project-gates'), { recursive: true });
-  await mkdir(path.join(root, '.rac/mcps'), { recursive: true });
-  await mkdir(path.join(root, '.rac/rules'), { recursive: true });
-  await writeFile(path.join(root, '.rac/config.toml'), '', 'utf8');
-
-  await writeFile(path.join(root, '.rac/agents/reviewer.toml'), 'id = "reviewer"\ninstructions = "./reviewer.md"\n[vendor.opencode]\ntools = ["legacy"]\n', 'utf8');
-  await writeFile(path.join(root, '.rac/agents/reviewer.md'), 'Review this project.\n', 'utf8');
-
-  await writeFile(path.join(root, '.rac/skills/project-gates/SKILL.md'), '+++\ndescription = "project checks"\nassets = ["checklist.md"]\n[vendor.claude.frontmatter]\naudience = "claude"\n[vendor.codex.frontmatter]\naudience = "codex"\n[vendor.opencode.frontmatter]\naudience = "opencode"\n+++\nRun checks\n', 'utf8');
-  await writeFile(path.join(root, '.rac/skills/project-gates/checklist.md'), '- test\n', 'utf8');
-
-  await writeFile(path.join(root, '.rac/mcps/project-rules.toml'), 'id = "project-rules"\ncommand = "node"\nargs = ["./mcp.js", "${PROJECT_RULES_TOKEN}"]\nstartup_timeout_ms = 1200\n', 'utf8');
-
-  await writeFile(path.join(root, '.rac/rules/wrappers.toml'), '[[rule]]\nid = "deny-gh-pr-merge"\ndecision = "forbidden"\njustification = "Use wrapper"\ncommand = ["gh", ["pr", "issue"], "merge"]\n\n[[rule]]\nid = "deny-git-push"\ndecision = "forbidden"\njustification = "Use wrapper"\ncommand = ["git", "push"]\nappend_wildcard = false\n', 'utf8');
-}
-
-describe('parsers', () => {
-  it('pack config add/list/remove enforces validation and preserves unrelated content', async () => {
-    const root = await makeTmp();
-    await mkdir(path.join(root, '.rac'), { recursive: true });
-
-    await expect(listProjectPacks(root)).rejects.toThrow('missing required config');
-    await expect(addProjectPack(root, { id: 'a', repo: 'github:owner/repo', ref: 'main' })).rejects.toThrow('missing required config');
-    await expect(removeProjectPack(root, 'a')).rejects.toThrow('missing required config');
-
-    await writeFile(path.join(root, '.rac/config.toml'), 'title = "demo"\n', 'utf8');
-
-    await expect(addProjectPack(root, { id: 'bad id', repo: 'github:owner/repo', ref: 'main' })).rejects.toThrow('invalid pack id');
-    await expect(addProjectPack(root, { id: 'project', repo: 'github:owner/repo', ref: 'main' })).rejects.toThrow('project is reserved');
-    await expect(addProjectPack(root, { id: 'good', repo: 'https://github.com/owner/repo', ref: 'main' })).rejects.toThrow('invalid pack repo');
-    await expect(addProjectPack(root, { id: 'good', repo: 'github:owner/repo', ref: 'bad ref' })).rejects.toThrow('invalid pack ref');
-
-    const before = await readFile(path.join(root, '.rac/config.toml'), 'utf8');
-    await addProjectPack(root, { id: 'alpha', repo: 'github:owner/alpha', ref: 'main' });
-    const afterOne = await readFile(path.join(root, '.rac/config.toml'), 'utf8');
-    expect(afterOne.startsWith(before)).toBe(true);
-    expect(afterOne).toContain('[[packs]]\nid = "alpha"\nrepo = "github:owner/alpha"\nref = "main"\n');
-
-    await addProjectPack(root, { id: 'beta', repo: 'github:owner/beta', ref: 'v1' });
-    await expect(addProjectPack(root, { id: 'alpha', repo: 'github:owner/alpha', ref: 'main' })).rejects.toThrow('duplicate pack id');
-
-    const listed = await listProjectPacks(root);
-    expect(listed.map((pack) => `${pack.id} ${pack.repo} ${pack.ref}`)).toEqual([
-      'alpha github:owner/alpha main',
-      'beta github:owner/beta v1'
-    ]);
-
-    await expect(removeProjectPack(root, 'missing')).rejects.toThrow('pack not found');
-    await removeProjectPack(root, 'alpha');
-    const afterRemove = await readFile(path.join(root, '.rac/config.toml'), 'utf8');
-    expect(afterRemove).toContain('title = "demo"');
-    expect(afterRemove).not.toContain('id = "alpha"');
-    expect(afterRemove).toContain('id = "beta"');
-    expect((await listProjectPacks(root)).map((pack) => pack.id)).toEqual(['beta']);
-  });
-
-  it('cli pack add/list/remove wiring handles required ref, list formatting, escaping, and errors', async () => {
-    const root = await makeTmp();
-    await mkdir(path.join(root, '.rac'), { recursive: true });
-    await writeFile(path.join(root, '.rac/config.toml'), 'title = "demo"\r\n\r\n\r\n[other]\r\nvalue = "keep"\r\n', 'utf8');
-
-    const listEmpty = runCli(root, ['pack', 'list']);
-    expect(listEmpty.status).toBe(0);
-    expect(listEmpty.stdout).toBe('-\n');
-
-    const missingRef = runCli(root, ['pack', 'add', 'alpha', 'github:owner/alpha']);
-    expect(missingRef.status).toBe(2);
-    expect(missingRef.stderr).toContain("required option '--ref <ref>'");
-
-    const add = runCli(root, ['pack', 'add', 'alpha', 'github:owner/alpha', '--ref', 'tag"\\candidate']);
-    expect(add.status).toBe(0);
-    const parsed = parseToml(await readFile(path.join(root, '.rac/config.toml'), 'utf8')) as {
-      packs?: Array<{ id?: string; repo?: string; ref?: string }>;
-    };
-    expect(parsed.packs?.[0]).toEqual({
-      id: 'alpha',
-      repo: 'github:owner/alpha',
-      ref: 'tag"\\candidate'
-    });
-
-    const listOne = runCli(root, ['pack', 'list']);
-    expect(listOne.status).toBe(0);
-    expect(listOne.stdout).toBe('alpha github:owner/alpha tag"\\candidate\n');
-
-    const removeMissing = runCli(root, ['pack', 'remove', 'missing']);
-    expect(removeMissing.status).toBe(1);
-    expect(removeMissing.stderr).toContain('pack not found: missing');
-  });
-
-  it('cli pack remove matches whitespace/commented [[ packs ]] headers and preserves unrelated file fidelity', async () => {
-    const root = await makeTmp();
-    await mkdir(path.join(root, '.rac'), { recursive: true });
-    await writeFile(
-      path.join(root, '.rac/config.toml'),
-      'title = "demo"\r\n\r\n   [[ packs ]]   # keep-comment\r\nid = "alpha"\r\nrepo = "github:owner/alpha"\r\nref = "main"\r\n\r\n\r\n[other]\r\nvalue = "keep"\r\n',
-      'utf8'
-    );
-
-    const remove = runCli(root, ['pack', 'remove', 'alpha']);
-    expect(remove.status).toBe(0);
-
-    const updated = await readFile(path.join(root, '.rac/config.toml'), 'utf8');
-    expect(updated).toBe('title = "demo"\r\n\r\n[other]\r\nvalue = "keep"\r\n');
-  });
-
-  it('agent parser validates TOML and duplicate ids', async () => {
-    const root = await makeTmp();
-    await mkdir(path.join(root, '.rac/agents'), { recursive: true });
-    await writeFile(path.join(root, '.rac/agents/a.toml'), 'id = "x"\ninstructions = "hello"\n', 'utf8');
-    await writeFile(path.join(root, '.rac/agents/b.toml'), 'id = "x"\ninstructions = "hello"\n', 'utf8');
-    await expect(loadAgents(path.join(root, '.rac'), 'project')).rejects.toThrow('duplicate agent id');
-
-    await writeFile(path.join(root, '.rac/agents/b.toml'), 'id = "y"\ninstructions = [broken\n', 'utf8');
-    await expect(loadAgents(path.join(root, '.rac'), 'project')).rejects.toThrow('invalid TOML');
-  });
-
-  it('skill parser requires +++ at byte 0 and closing delimiter', async () => {
-    const root = await makeTmp();
-    await mkdir(path.join(root, '.rac/skills/s1'), { recursive: true });
-    await writeFile(path.join(root, '.rac/skills/s1/SKILL.md'), 'bad\n+++\ndescription = "x"\n+++\nbody\n', 'utf8');
-    await expect(loadSkills(path.join(root, '.rac'), 'project')).rejects.toThrow('byte 0');
-
-    await writeFile(path.join(root, '.rac/skills/s1/SKILL.md'), '+++\ndescription = "x"\nbody\n', 'utf8');
-    await expect(loadSkills(path.join(root, '.rac'), 'project')).rejects.toThrow('missing closing +++ delimiter');
-  });
-
-  it('skill parser supports SKILL.tpl.md and rejects dual SKILL files in one directory', async () => {
-    const root = await makeTmp();
-    await mkdir(path.join(root, '.rac/skills/s1'), { recursive: true });
-    await writeFile(path.join(root, '.rac/skills/s1/SKILL.tpl.md'), '+++\ndescription = "x"\n+++\nHello {% if vendor.codex %}Codex{% endif %}\n', 'utf8');
-    const skills = await loadSkills(path.join(root, '.rac'), 'project');
-    expect(skills[0].bodyIsTemplate).toBe(true);
-
-    await writeFile(path.join(root, '.rac/skills/s1/SKILL.md'), '+++\ndescription = "x"\n+++\nBody\n', 'utf8');
-    await expect(loadSkills(path.join(root, '.rac'), 'project')).rejects.toThrow('cannot contain both SKILL.md and SKILL.tpl.md');
-  });
-
-  it('mcp parser enforces local xor remote and collects env vars', async () => {
-    const root = await makeTmp();
-    await mkdir(path.join(root, '.rac/mcps'), { recursive: true });
-    await writeFile(path.join(root, '.rac/mcps/a.toml'), 'id = "a"\n', 'utf8');
-    await expect(loadMcps(path.join(root, '.rac'), 'project')).rejects.toThrow('local command OR remote type+url');
-
-    await writeFile(path.join(root, '.rac/mcps/a.toml'), 'id = "a"\ncommand = "node"\nargs = ["${X}"]\ntype = "remote"\nurl = "https://x"\n', 'utf8');
-    await expect(loadMcps(path.join(root, '.rac'), 'project')).rejects.toThrow('cannot define both local and remote transport');
-
-    await writeFile(path.join(root, '.rac/mcps/a.toml'), 'id = "a"\ncommand = "node"\nargs = ["${X}", "${Y}"]\n', 'utf8');
-    const parsed = await loadMcps(path.join(root, '.rac'), 'project');
-    expect(parsed[0].envVars).toEqual(['X', 'Y']);
-  });
-
-  it('rule parser enforces [[rule]] entries, unique ids, and command validation', async () => {
-    const root = await makeTmp();
-    await mkdir(path.join(root, '.rac/rules'), { recursive: true });
-    await writeFile(path.join(root, '.rac/rules/a.toml'), 'id = "x"\n', 'utf8');
-    await expect(loadRules(path.join(root, '.rac'), 'project')).rejects.toThrow('missing [[rule]] entries');
-
-    await writeFile(path.join(root, '.rac/rules/a.toml'), '[[rule]]\nid = "r1"\ndecision = "allow"\njustification = "x"\ncommand = ["git"]\n', 'utf8');
-    await expect(loadRules(path.join(root, '.rac'), 'project')).rejects.toThrow('unsupported rule decision');
-
-    await writeFile(path.join(root, '.rac/rules/a.toml'), '[[rule]]\nid = "r1"\ndecision = "forbidden"\njustification = ""\ncommand = ["git"]\n', 'utf8');
-    await expect(loadRules(path.join(root, '.rac'), 'project')).rejects.toThrow();
-
-    await writeFile(path.join(root, '.rac/rules/a.toml'), '[[rule]]\nid = "r1"\ndecision = "forbidden"\njustification = "x"\ncommand = []\n', 'utf8');
-    await expect(loadRules(path.join(root, '.rac'), 'project')).rejects.toThrow('empty command list');
-
-    await writeFile(path.join(root, '.rac/rules/a.toml'), '[[rule]]\nid = "r1"\ndecision = "forbidden"\njustification = "x"\ncommand = [["git"], []]\n', 'utf8');
-    await expect(loadRules(path.join(root, '.rac'), 'project')).rejects.toThrow('empty command alternative array');
-
-    await writeFile(path.join(root, '.rac/rules/a.toml'), '[[rule]]\nid = "r1"\ndecision = "forbidden"\njustification = "x"\ncommand = ["git"]\n', 'utf8');
-    await writeFile(path.join(root, '.rac/rules/b.toml'), '[[rule]]\nid = "r1"\ndecision = "forbidden"\njustification = "x"\ncommand = ["gh"]\n', 'utf8');
-    await expect(loadRules(path.join(root, '.rac'), 'project')).rejects.toThrow('duplicate rule id');
-  });
-
-  it('normalizes definition ids to NFC, rejects unsafe ids, and detects duplicates after normalization', async () => {
-    const root = await makeTmp();
-    await mkdir(path.join(root, '.rac/agents'), { recursive: true });
-    await mkdir(path.join(root, '.rac/mcps'), { recursive: true });
-    await mkdir(path.join(root, '.rac/rules'), { recursive: true });
-
-    await writeFile(path.join(root, '.rac/agents/a.toml'), 'id = "agént"\ninstructions = "ok"\n', 'utf8');
-    await writeFile(path.join(root, '.rac/agents/b.toml'), 'id = "age\u0301nt"\ninstructions = "ok"\n', 'utf8');
-    await writeFile(path.join(root, '.rac/mcps/a.toml'), 'id = "srv"\ncommand = "node"\n', 'utf8');
-    await writeFile(path.join(root, '.rac/rules/a.toml'), '[[rule]]\nid = "rulé"\ndecision = "forbidden"\njustification = "x"\ncommand = ["git"]\n', 'utf8');
-
-    await expect(loadAgents(path.join(root, '.rac'), 'project')).rejects.toThrow('duplicate agent id');
-
-    await writeFile(path.join(root, '.rac/agents/b.toml'), 'id = "helper"\ninstructions = "ok"\n', 'utf8');
-    const agents = await loadAgents(path.join(root, '.rac'), 'project');
-    expect(agents[0].id).toBe('agént');
-
-    await writeFile(path.join(root, '.rac/agents/b.toml'), 'id = " bad "\ninstructions = "x"\n', 'utf8');
-    await expect(loadAgents(path.join(root, '.rac'), 'project')).rejects.toThrow('leading/trailing whitespace');
-    await writeFile(path.join(root, '.rac/agents/b.toml'), 'id = ".."\ninstructions = "x"\n', 'utf8');
-    await expect(loadAgents(path.join(root, '.rac'), 'project')).rejects.toThrow('invalid agent id');
-    await writeFile(path.join(root, '.rac/agents/b.toml'), 'id = "bad/name"\ninstructions = "x"\n', 'utf8');
-    await expect(loadAgents(path.join(root, '.rac'), 'project')).rejects.toThrow('path separators');
-  });
-});
-
-describe('runtime config + adapters', () => {
-  it('resolves relative agent instructions and skill assets in runtime config', async () => {
-    const root = await makeTmp();
-    await seed(root);
-    const sourceRoot = path.join(root, '.rac');
-    const config = await buildRuntimeConfig({
-      root: sourceRoot,
-      agents: await loadAgents(sourceRoot, 'project'),
-      skills: await loadSkills(sourceRoot, 'project'),
-      mcps: await loadMcps(sourceRoot, 'project'),
-      rules: await loadRules(sourceRoot, 'project')
-    });
-
-    expect(config.agents[0].instructions).toContain('Review this project.');
-    expect(config.skills[0].assets[0].relativePath).toBe('checklist.md');
-    expect(config.skills[0].assets[0].hash.length).toBeGreaterThan(0);
-  });
-
-  it('adapters consume same runtime config and output vendor-specific files', async () => {
-    const root = await makeTmp();
-    await seed(root);
-    const sourceRoot = path.join(root, '.rac');
-    const config = await buildRuntimeConfig({
-      root: sourceRoot,
-      agents: await loadAgents(sourceRoot, 'project'),
-      skills: await loadSkills(sourceRoot, 'project'),
-      mcps: await loadMcps(sourceRoot, 'project'),
-      rules: await loadRules(sourceRoot, 'project')
-    });
-
-    const claude = adapterFor('claude').plan(config);
-    const codex = adapterFor('codex').plan(config);
-    const opencode = adapterFor('opencode').plan(config);
-
-    expect(claude.some((entry) => entry.relPath === '.claude/agents/reviewer.md')).toBe(true);
-    expect(codex.some((entry) => entry.relPath === '.codex/agents/reviewer.toml')).toBe(true);
-    expect(opencode.some((entry) => entry.relPath === '.opencode/agents/reviewer.md')).toBe(true);
-  });
-
-  it('renders vendor templates per target with if/elsif/else branching and fails on unknown variables', async () => {
-    const root = await makeTmp();
-    await mkdir(path.join(root, '.rac/agents'), { recursive: true });
-    await mkdir(path.join(root, '.rac/skills/s1'), { recursive: true });
-    await writeFile(path.join(root, '.rac/config.toml'), '', 'utf8');
-    await writeFile(path.join(root, '.rac/agents/reviewer.toml'), 'id = "reviewer"\ninstructions = "./reviewer.tpl.md"\n', 'utf8');
-    await writeFile(path.join(root, '.rac/agents/reviewer.tpl.md'), 'For {% if vendor.codex %}Codex{% elsif vendor.claude %}Claude{% else %}Other{% endif %}\n', 'utf8');
-    await writeFile(path.join(root, '.rac/skills/s1/SKILL.tpl.md'), '+++\ndescription = "skill"\n+++\nHello {% if vendor.opencode %}OpenCode{% endif %}\n', 'utf8');
-
-    await install({ cwd: root, targets: ['claude', 'codex', 'opencode'], kinds: ['agent', 'skill'] });
-    const codexToml = await readFile(path.join(root, '.codex/agents/reviewer.toml'), 'utf8');
-    expect(codexToml).toContain('For Codex');
-    const claudeAgent = await readFile(path.join(root, '.claude/agents/reviewer.md'), 'utf8');
-    expect(claudeAgent).toContain('For Claude');
-    const opencodeAgent = await readFile(path.join(root, '.opencode/agents/reviewer.md'), 'utf8');
-    expect(opencodeAgent).toContain('For Other');
-    const opencodeSkill = await readFile(path.join(root, '.opencode/skills/s1/SKILL.md'), 'utf8');
-    expect(opencodeSkill).toContain('Hello OpenCode');
-
-    await writeFile(path.join(root, '.rac/agents/reviewer.tpl.md'), 'Bad {{ vendor.missing }}\n', 'utf8');
-    await expect(install({ cwd: root, targets: ['codex'], kinds: ['agent'] })).rejects.toThrow('template render failed');
-
-    await writeFile(path.join(root, '.rac/agents/reviewer.tpl.md'), 'Bad {% if vendor.cursor %}Cursor{% endif %}\n', 'utf8');
-    await expect(install({ cwd: root, targets: ['codex'], kinds: ['agent'] })).rejects.toThrow('template render failed');
-  });
-
-  it('rejects include/render tags in templates, including whitespace-control forms', async () => {
-    const root = await makeTmp();
-    await mkdir(path.join(root, '.rac/agents'), { recursive: true });
-    await writeFile(path.join(root, '.rac/config.toml'), '', 'utf8');
-    await writeFile(path.join(root, '.rac/agents/reviewer.toml'), 'id = "reviewer"\ninstructions = "./reviewer.tpl.md"\n', 'utf8');
-
-    await writeFile(path.join(root, '.rac/agents/reviewer.tpl.md'), '{% include "partial.md" %}\n', 'utf8');
-    await expect(install({ cwd: root, targets: ['codex'], kinds: ['agent'] })).rejects.toThrow('includes/partials are not supported');
-
-    await writeFile(path.join(root, '.rac/agents/reviewer.tpl.md'), '{%- include "partial.md" -%}\n', 'utf8');
-    await expect(install({ cwd: root, targets: ['codex'], kinds: ['agent'] })).rejects.toThrow('includes/partials are not supported');
-
-    await writeFile(path.join(root, '.rac/agents/reviewer.tpl.md'), '{% render "partial.md" %}\n', 'utf8');
-    await expect(install({ cwd: root, targets: ['codex'], kinds: ['agent'] })).rejects.toThrow('includes/partials are not supported');
-
-    await writeFile(path.join(root, '.rac/agents/reviewer.tpl.md'), '{%- render "partial.md" -%}\n', 'utf8');
-    await expect(install({ cwd: root, targets: ['codex'], kinds: ['agent'] })).rejects.toThrow('includes/partials are not supported');
-  });
-
-  it('reports malformed liquid with source-aware context for agents and skills', async () => {
-    const root = await makeTmp();
-    await mkdir(path.join(root, '.rac/agents'), { recursive: true });
-    await mkdir(path.join(root, '.rac/skills/s1'), { recursive: true });
-    await writeFile(path.join(root, '.rac/config.toml'), '', 'utf8');
-
-    await writeFile(path.join(root, '.rac/agents/reviewer.toml'), 'id = "reviewer"\ninstructions = "./reviewer.tpl.md"\n', 'utf8');
-    await writeFile(path.join(root, '.rac/agents/reviewer.tpl.md'), '{% if vendor.codex %}Codex\n', 'utf8');
-    await expect(install({ cwd: root, targets: ['codex'], kinds: ['agent'] })).rejects.toThrow('agent reviewer: template render failed');
-
-    await writeFile(path.join(root, '.rac/agents/reviewer.toml'), 'id = "reviewer"\ninstructions = "plain"\n', 'utf8');
-    await writeFile(path.join(root, '.rac/skills/s1/SKILL.tpl.md'), '+++\ndescription = "skill"\n+++\n{% if vendor.codex %}Codex\n', 'utf8');
-    await expect(install({ cwd: root, targets: ['codex'], kinds: ['skill'] })).rejects.toThrow('skill s1: template render failed');
-  });
-
-  it('keeps liquid syntax literal in non-template agent instructions and skill bodies', async () => {
-    const root = await makeTmp();
-    await mkdir(path.join(root, '.rac/agents'), { recursive: true });
-    await mkdir(path.join(root, '.rac/skills/s1'), { recursive: true });
-    await writeFile(path.join(root, '.rac/config.toml'), '', 'utf8');
-
-    await writeFile(path.join(root, '.rac/agents/reviewer.toml'), 'id = "reviewer"\ninstructions = "./reviewer.md"\n', 'utf8');
-    await writeFile(path.join(root, '.rac/agents/reviewer.md'), 'Literal {% if vendor.codex %}Codex{% endif %} and {{ vendor.cursor }}\n', 'utf8');
-    await writeFile(path.join(root, '.rac/skills/s1/SKILL.md'), '+++\ndescription = "skill"\n+++\nLiteral {% if vendor.codex %}Codex{% endif %} and {{ vendor.cursor }}\n', 'utf8');
-
-    await install({ cwd: root, targets: ['codex'], kinds: ['agent', 'skill'] });
-
-    const agentOutput = await readFile(path.join(root, '.codex/agents/reviewer.toml'), 'utf8');
-    expect(agentOutput).toContain('Literal {% if vendor.codex %}Codex{% endif %} and {{ vendor.cursor }}');
-    const skillOutput = await readFile(path.join(root, '.agents/skills/s1/SKILL.md'), 'utf8');
-    expect(skillOutput).toContain('Literal {% if vendor.codex %}Codex{% endif %} and {{ vendor.cursor }}');
-  });
-
-  it('preserves skill frontmatter semantics across codex/opencode/claude adapters', async () => {
-    const root = await makeTmp();
-    await seed(root);
-    const sourceRoot = path.join(root, '.rac');
-    const config = await buildRuntimeConfig({
-      root: sourceRoot,
-      agents: await loadAgents(sourceRoot, 'project'),
-      skills: await loadSkills(sourceRoot, 'project'),
-      mcps: await loadMcps(sourceRoot, 'project'),
-      rules: await loadRules(sourceRoot, 'project')
-    });
-
-    const claudeSkill = adapterFor('claude')
-      .plan(config)
-      .find((entry) => entry.kind === 'skill' && entry.relPath === '.claude/skills/project-gates/SKILL.md');
-    const codexSkill = adapterFor('codex')
-      .plan(config)
-      .find((entry) => entry.kind === 'skill' && entry.relPath === '.agents/skills/project-gates/SKILL.md');
-    const opencodeSkill = adapterFor('opencode')
-      .plan(config)
-      .find((entry) => entry.kind === 'skill' && entry.relPath === '.opencode/skills/project-gates/SKILL.md');
-
-    expect(claudeSkill?.content).toContain('description: "project checks"');
-    expect(claudeSkill?.content).toContain('audience: "claude"');
-    expect(claudeSkill?.content).not.toContain('vendor:');
-
-    expect(codexSkill?.content).toContain('name: "project-gates"');
-    expect(codexSkill?.content).toContain('description: "project checks"');
-    expect(codexSkill?.content).toContain('audience: "codex"');
-    expect(codexSkill?.content).not.toContain('vendor:');
-
-    expect(opencodeSkill?.content).toContain('name: "project-gates"');
-    expect(opencodeSkill?.content).toContain('description: "project checks"');
-    expect(opencodeSkill?.content).toContain('audience: "opencode"');
-    expect(opencodeSkill?.content).not.toContain('vendor:');
-  });
-
-  it('registers adapters in table-driven list', () => {
-    expect(TARGET_ADAPTERS.map((adapter) => adapter.target).sort()).toEqual(['claude', 'codex', 'opencode']);
-  });
-});
+afterEach(cleanupTmpDirs);
 
 describe('install + doctor', () => {
   it('init refuses overwrite and install copies only declared assets', async () => {
@@ -436,21 +41,32 @@ describe('install + doctor', () => {
     await expect(install({ cwd: root, targets: ['codex'], kinds: ['skill'] })).rejects.toThrow('skill asset traversal rejected');
   });
 
-  it('refuses unmanaged json clobber unless manifest-owned or force, dry-run writes nothing', async () => {
+  it('surgically merges existing unmanaged shared json by default; --no-merge refuses without --force; dry-run writes nothing', async () => {
     const root = await makeTmp();
     await seed(root);
 
     await mkdir(path.join(root, '.opencode'), { recursive: true });
     await writeFile(path.join(root, '.opencode/opencode.jsonc'), '{"external":true}\n', 'utf8');
-    await expect(install({ cwd: root, targets: ['opencode'], kinds: ['mcp'] })).rejects.toThrow('refusing overwrite unmanaged file');
-    await expect(install({ cwd: root, targets: ['opencode'], kinds: ['mcp'], dryRun: true })).rejects.toThrow('refusing overwrite unmanaged file');
 
-    const beforeManifestMissing = stat(path.join(root, '.codex/.rac-install-manifest.json'));
+    await install({ cwd: root, targets: ['opencode'], kinds: ['mcp'] });
+    const merged = await readJsoncFile<{ external?: boolean; mcp?: Record<string, unknown> }>(path.join(root, '.opencode/opencode.jsonc'));
+    expect(merged.external).toBe(true);
+    expect(Object.keys(merged.mcp ?? {}).length).toBeGreaterThan(0);
+
+    const root2 = await makeTmp();
+    await seed(root2);
+    await mkdir(path.join(root2, '.opencode'), { recursive: true });
+    await writeFile(path.join(root2, '.opencode/opencode.jsonc'), '{"external":true}\n', 'utf8');
+
+    await expect(install({ cwd: root2, targets: ['opencode'], kinds: ['mcp'], noMerge: true })).rejects.toThrow('refusing overwrite unmanaged file');
+    await expect(install({ cwd: root2, targets: ['opencode'], kinds: ['mcp'], noMerge: true, dryRun: true })).rejects.toThrow('refusing overwrite unmanaged file');
+
+    const beforeManifestMissing = stat(path.join(root2, '.codex/.rac-install-manifest.json'));
     await expect(beforeManifestMissing).rejects.toThrow();
-    await install({ cwd: root, targets: ['codex'], kinds: ['agent'], dryRun: true });
-    await expect(stat(path.join(root, '.codex/.rac-install-manifest.json'))).rejects.toThrow();
+    await install({ cwd: root2, targets: ['codex'], kinds: ['agent'], dryRun: true });
+    await expect(stat(path.join(root2, '.codex/.rac-install-manifest.json'))).rejects.toThrow();
 
-    await expect(install({ cwd: root, targets: ['opencode'], kinds: ['mcp'], force: true })).resolves.toBeTruthy();
+    await expect(install({ cwd: root2, targets: ['opencode'], kinds: ['mcp'], noMerge: true, force: true })).resolves.toBeTruthy();
   });
 
   it('recognizes managed warnings for manifest-loss overwrite safety and rejects legacy marker-only files', async () => {
@@ -543,9 +159,8 @@ describe('install + doctor', () => {
     expect(Object.keys(claudeProject.mcpServers)).toEqual(['a-remote', 'project-rules', 'z-remote']);
 
     const codexToml = await readFile(path.join(root, '.codex/config.toml'), 'utf8');
-    expect(codexToml.startsWith(`${MANAGED_TOML_WARNING}\n`)).toBe(true);
-    expect(codexToml.indexOf('[mcp_servers."a-remote"]')).toBeLessThan(codexToml.indexOf('[mcp_servers."project-rules"]'));
-    expect(codexToml.indexOf('[mcp_servers."project-rules"]')).toBeLessThan(codexToml.indexOf('[mcp_servers."z-remote"]'));
+    expect(codexToml.indexOf('[mcp_servers.a-remote]')).toBeLessThan(codexToml.indexOf('[mcp_servers.project-rules]'));
+    expect(codexToml.indexOf('[mcp_servers.project-rules]')).toBeLessThan(codexToml.indexOf('[mcp_servers.z-remote]'));
     expect(codexToml).toContain('startup_timeout_sec = 2');
     expect(codexToml).not.toContain('startup_timeout = ');
 

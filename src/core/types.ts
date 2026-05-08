@@ -1,6 +1,7 @@
 export type Pack = string;
 export type Target = 'claude' | 'codex' | 'opencode';
 export type Kind = 'agent' | 'skill' | 'mcp' | 'rule';
+export type Scope = 'project' | 'user';
 
 export type AgentDef = {
   pack: Pack;
@@ -75,6 +76,7 @@ export type ManagedInventoryEntry = {
   version: 1;
   format: 'file' | 'json' | 'toml' | 'markdown';
   selector: string;
+  entries?: string[];
 };
 
 export type InstallManifest = {
@@ -91,6 +93,8 @@ export type InstallOptions = {
   force?: boolean;
   refreshPacks?: boolean;
   cwd: string;
+  scope?: Scope;
+  noMerge?: boolean;
 };
 
 export type InstallResult = {

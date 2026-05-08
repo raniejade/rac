@@ -3,11 +3,12 @@ import { Command, InvalidArgumentError } from 'commander';
 
 import { doctor, initProject, install } from './core/install.js';
 import { addProjectPack, listProjectPacks, removeProjectPack } from './core/pack-config.js';
-import type { Kind, Target } from './core/types.js';
+import type { Kind, Scope, Target } from './core/types.js';
 import { splitCsv } from './core/util.js';
 
 const TARGET_VALUES = ['claude', 'codex', 'opencode'] as const;
 const KIND_VALUES = ['agent', 'skill', 'mcp', 'rule'] as const;
+const SCOPE_VALUES = ['project', 'user'] as const;
 
 function normalizeTargets(value: string | undefined): Target[] {
   const targets = splitCsv<Target>(value, TARGET_VALUES);
@@ -25,6 +26,12 @@ function normalizeKinds(value: string | undefined): Kind[] {
   return kinds;
 }
 
+function normalizeScope(value: string | undefined): Scope {
+  if (value === undefined) return 'project';
+  if (!SCOPE_VALUES.includes(value as Scope)) throw new InvalidArgumentError(`invalid scope: ${value} (expected project|user)`);
+  return value as Scope;
+}
+
 const program = new Command();
 program
   .name('rac')
@@ -40,8 +47,9 @@ program
 program.command('init')
   .description('Initialize .rac source tree with starter reviewer + project-gates + project-rules + wrapper-deny rule definitions')
   .option('--empty', 'create folders only without starter examples')
-  .action(async (opts: { empty?: boolean }) => {
-    await initProject(process.cwd(), !!opts.empty);
+  .option('--scope <scope>', 'project|user (default project)')
+  .action(async (opts: { empty?: boolean; scope?: string }) => {
+    await initProject(process.cwd(), !!opts.empty, normalizeScope(opts.scope));
   });
 
 program.command('install')
@@ -53,7 +61,9 @@ program.command('install')
   .option('--check', 'verify generated outputs/manifests are up to date without writing')
   .option('--force', 'override unmanaged files')
   .option('--refresh-packs', 'force re-clone of shared pack caches before installing')
-  .action(async (opts: { target?: string; kind?: string; dryRun?: boolean; clean?: boolean; check?: boolean; force?: boolean; refreshPacks?: boolean }) => {
+  .option('--scope <scope>', 'project|user (default project)')
+  .option('--no-merge', 'bypass surgical merge of shared config files; write generated content wholesale')
+  .action(async (opts: { target?: string; kind?: string; dryRun?: boolean; clean?: boolean; check?: boolean; force?: boolean; refreshPacks?: boolean; scope?: string; merge?: boolean }) => {
     const result = await install({
       targets: normalizeTargets(opts.target),
       kinds: normalizeKinds(opts.kind),
@@ -62,6 +72,8 @@ program.command('install')
       check: !!opts.check,
       force: !!opts.force,
       refreshPacks: !!opts.refreshPacks,
+      scope: normalizeScope(opts.scope),
+      noMerge: opts.merge === false ? true : undefined,
       cwd: process.cwd()
     });
     console.log(`create:\n${result.create.join('\n') || '-'}`);
@@ -73,8 +85,9 @@ program.command('doctor')
   .description('Validate definitions and print warnings')
   .option('--target <targets>', 'comma-separated: claude,codex,opencode')
   .option('--kind <kinds>', 'comma-separated: agent,skill,mcp,rule')
-  .action(async (opts: { target?: string; kind?: string }) => {
-    const warnings = await doctor(process.cwd(), normalizeTargets(opts.target), normalizeKinds(opts.kind));
+  .option('--scope <scope>', 'project|user (default project)')
+  .action(async (opts: { target?: string; kind?: string; scope?: string }) => {
+    const warnings = await doctor(process.cwd(), normalizeTargets(opts.target), normalizeKinds(opts.kind), normalizeScope(opts.scope));
     if (warnings.length === 0) {
       console.log('ok');
       return;

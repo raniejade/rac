@@ -102,6 +102,24 @@ function mapId<T extends { id: string }>(items: T[], kind: string): void {
   }
 }
 
+export async function loadInstallSettings(projectRoot: string): Promise<{ merge: boolean }> {
+  const configPath = path.join(projectRoot, 'config.toml');
+  let raw: string;
+  try { raw = await readFile(configPath, 'utf8'); }
+  catch { return { merge: true }; }
+  const parsed = parseTomlOrThrow(configPath, raw);
+  const installRaw = parsed.install;
+  if (installRaw === undefined) return { merge: true };
+  if (!installRaw || typeof installRaw !== 'object' || Array.isArray(installRaw)) {
+    throw new Error(`invalid [install] block in ${configPath}`);
+  }
+  const installTable = installRaw as Record<string, unknown>;
+  const mergeRaw = installTable.merge;
+  if (mergeRaw === undefined) return { merge: true };
+  if (typeof mergeRaw !== 'boolean') throw new Error(`invalid install.merge in ${configPath}; expected boolean`);
+  return { merge: mergeRaw };
+}
+
 export async function loadProjectPackConfig(projectRoot: string): Promise<{ packs: PackSpec[] }> {
   const configPath = path.join(projectRoot, 'config.toml');
   const parsed = parseTomlOrThrow(configPath, await readFile(configPath, 'utf8'));
