@@ -136,10 +136,13 @@ describe('parsers', () => {
     const root = await makeTmp();
     await mkdir(path.join(root, '.rac/mcps'), { recursive: true });
     await writeFile(path.join(root, '.rac/mcps/a.toml'), 'id = "a"\n', 'utf8');
-    await expect(loadMcps(path.join(root, '.rac'), 'project')).rejects.toThrow('local command OR remote type+url');
+    await expect(loadMcps(path.join(root, '.rac'), 'project')).rejects.toThrow('local command OR remote url');
 
-    await writeFile(path.join(root, '.rac/mcps/a.toml'), 'id = "a"\ncommand = "node"\nargs = ["${X}"]\ntype = "remote"\nurl = "https://x"\n', 'utf8');
+    await writeFile(path.join(root, '.rac/mcps/a.toml'), 'id = "a"\ncommand = "node"\nargs = ["${X}"]\nurl = "https://x"\n', 'utf8');
     await expect(loadMcps(path.join(root, '.rac'), 'project')).rejects.toThrow('cannot define both local and remote transport');
+
+    await writeFile(path.join(root, '.rac/mcps/a.toml'), 'id = "a"\nurl = "https://x"\n', 'utf8');
+    await expect(loadMcps(path.join(root, '.rac'), 'project')).resolves.toMatchObject([{ id: 'a', url: 'https://x' }]);
 
     await writeFile(path.join(root, '.rac/mcps/a.toml'), 'id = "a"\ncommand = "node"\nargs = ["${X}", "${Y}"]\n', 'utf8');
     const parsed = await loadMcps(path.join(root, '.rac'), 'project');

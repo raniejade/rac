@@ -37,7 +37,6 @@ export type McpDef = {
   id: string;
   command?: string;
   args?: string[];
-  type?: string;
   url?: string;
   startup_timeout_ms?: number;
   vendor?: Record<string, unknown>;

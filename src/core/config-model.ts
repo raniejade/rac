@@ -69,7 +69,7 @@ export type McpConfig = {
   };
   transport:
     | { kind: 'local'; command: string; args: string[] }
-    | { kind: 'remote'; type: string; url: string };
+    | { kind: 'remote'; url: string };
 };
 
 export type RuntimeConfig = {
@@ -293,7 +293,7 @@ export async function buildRuntimeConfig(input: BuildRuntimeConfigInput): Promis
     },
     transport: mcp.command
       ? { kind: 'local', command: mcp.command, args: mcp.args ?? [] }
-      : { kind: 'remote', type: String(mcp.type), url: String(mcp.url) }
+      : { kind: 'remote', url: String(mcp.url) }
   }));
 
   const rules: RuleConfig[] = input.rules.map((rule) => ({

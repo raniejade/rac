@@ -16,10 +16,10 @@ const REF_RE = /^\S+$/;
 
 const agentSchema = z.object({ id: z.string().min(1), name: z.string().optional(), description: z.string().optional(), instructions: z.string().min(1), tools: z.array(z.string()).optional(), vendor: z.record(z.unknown()).optional() });
 const skillSchema = z.object({ name: z.string().optional(), description: z.string().min(1), assets: z.array(z.string()).optional(), vendor: z.record(z.unknown()).optional() });
-const mcpSchema = z.object({ id: z.string().min(1), command: z.string().optional(), args: z.array(z.string()).optional(), type: z.string().optional(), url: z.string().optional(), startup_timeout_ms: z.number().int().positive().optional(), vendor: z.record(z.unknown()).optional() }).superRefine((v, ctx) => {
+const mcpSchema = z.object({ id: z.string().min(1), command: z.string().optional(), args: z.array(z.string()).optional(), url: z.string().optional(), startup_timeout_ms: z.number().int().positive().optional(), vendor: z.record(z.unknown()).optional() }).superRefine((v, ctx) => {
   const hasLocal = !!v.command;
-  const hasRemote = !!v.type && !!v.url;
-  if (!hasLocal && !hasRemote) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'mcp requires local command OR remote type+url' });
+  const hasRemote = !!v.url;
+  if (!hasLocal && !hasRemote) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'mcp requires local command OR remote url' });
   if (hasLocal && hasRemote) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'mcp cannot define both local and remote transport' });
 });
 const ruleSchema = z.object({ id: z.string().min(1), decision: z.string(), justification: z.string(), command: z.array(z.union([z.string(), z.array(z.string())])), append_wildcard: z.boolean().optional() });

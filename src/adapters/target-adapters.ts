@@ -204,7 +204,7 @@ function claudeAdapter(): TargetAdapter {
           mcp.id,
           mergeGeneratedWithVendor(mcp.transport.kind === 'local'
             ? { command: mcp.transport.command, args: mcp.transport.args }
-            : { type: mcp.transport.type, url: mcp.transport.url }, mcp.vendorConfig?.claude, `mcp ${mcp.id} vendor.claude.config`
+            : { url: mcp.transport.url }, mcp.vendorConfig?.claude, `mcp ${mcp.id} vendor.claude.config`
           )
         ]));
         const content = `${JSON.stringify({ mcpServers }, null, 2)}\n`;
@@ -325,7 +325,7 @@ function codexAdapter(): TargetAdapter {
           mcpSelectors.push(`mcp_servers.${tomlQuotedKeySegment(mcp.id)}`);
           const generated: Record<string, unknown> = mcp.transport.kind === 'local'
             ? { command: mcp.transport.command, args: mcp.transport.args }
-            : { type: mcp.transport.type, url: mcp.transport.url };
+            : { url: mcp.transport.url };
           if (mcp.startupTimeoutMs) generated.startup_timeout_sec = Math.ceil(mcp.startupTimeoutMs / 1000);
           const merged = mergeGeneratedWithVendor(generated, mcp.vendorConfig?.codex, `mcp ${mcp.id} vendor.codex.config`);
           mcpServers[mcp.id] = merged;

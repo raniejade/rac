@@ -116,18 +116,21 @@ Remote MCP definition:
 
 ```toml
 id = "remote-search"
-type = "streamable-http"
 url = "https://example.com/mcp"
 
 [vendor.claude.config]
+type = "sse"
 headers = { Authorization = "Bearer ${MCP_TOKEN}" }
+
+[vendor.codex.config]
+type = "streamable-http"
 ```
 
 - Local transport uses `command` plus optional `args`.
-- Remote transport uses `type` plus `url`.
+- Remote transport uses `url`.
 - Set one transport mode only.
 - `startup_timeout_ms` is supported in source and is emitted for Codex as `startup_timeout_sec`.
-- Use `vendor.<target>.config` for target-specific MCP fields.
+- Use `vendor.<target>.config` for target-specific MCP fields, including transport `type` values required by a vendor.
 - Avoid nested object values in `vendor.codex.config`; Codex TOML output supports scalar and array pass-through values.
 
 ## Rules
@@ -396,7 +399,7 @@ Guidelines:
 - `skill frontmatter must start with +++ at byte 0` or `missing closing +++ delimiter`
   - Fix `SKILL.md` TOML frontmatter delimiters and placement.
 
-- `mcp requires local command OR remote type+url` / `mcp cannot define both local and remote transport`
+- `mcp requires local command OR remote url` / `mcp cannot define both local and remote transport`
   - Fix MCP transport fields so only one transport mode is defined.
 
 - `missing env var: ...`

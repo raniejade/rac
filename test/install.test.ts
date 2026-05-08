@@ -150,8 +150,8 @@ describe('install + doctor', () => {
   it('aggregates multiple MCP definitions into one shared target config write', async () => {
     const root = await makeTmp();
     await seed(root);
-    await writeFile(path.join(root, '.rac/mcps/z-remote.toml'), 'id = "z-remote"\ntype = "sse"\nurl = "https://example.test/z"\n', 'utf8');
-    await writeFile(path.join(root, '.rac/mcps/a-remote.toml'), 'id = "a-remote"\ntype = "sse"\nurl = "https://example.test/a"\n', 'utf8');
+    await writeFile(path.join(root, '.rac/mcps/z-remote.toml'), 'id = "z-remote"\nurl = "https://example.test/z"\n', 'utf8');
+    await writeFile(path.join(root, '.rac/mcps/a-remote.toml'), 'id = "a-remote"\nurl = "https://example.test/a"\n', 'utf8');
 
     await install({ cwd: root, targets: ['claude', 'codex', 'opencode'], kinds: ['mcp'] });
 
@@ -408,7 +408,7 @@ describe('install + doctor', () => {
   it('vendor compatibility schema: OpenCode MCP emits local/remote typed entries and rejects legacy command object shape', async () => {
     const root = await makeTmp();
     await seed(root);
-    await writeFile(path.join(root, '.rac/mcps/a-remote.toml'), 'id = "a-remote"\ntype = "sse"\nurl = "https://example.test/a"\n', 'utf8');
+    await writeFile(path.join(root, '.rac/mcps/a-remote.toml'), 'id = "a-remote"\nurl = "https://example.test/a"\n', 'utf8');
 
     await install({ cwd: root, targets: ['opencode'], kinds: ['mcp'] });
 
@@ -447,7 +447,7 @@ describe('install + doctor', () => {
   it('clean keeps shared MCP config path when still used by current MCP set', async () => {
     const root = await makeTmp();
     await seed(root);
-    await writeFile(path.join(root, '.rac/mcps/remote.toml'), 'id = "remote"\ntype = "sse"\nurl = "https://example.test/mcp"\n', 'utf8');
+    await writeFile(path.join(root, '.rac/mcps/remote.toml'), 'id = "remote"\nurl = "https://example.test/mcp"\n', 'utf8');
     await install({ cwd: root, targets: ['claude'], kinds: ['mcp'] });
 
     await rm(path.join(root, '.rac/mcps/remote.toml'));
@@ -749,16 +749,29 @@ describe('install + doctor', () => {
       'id = "server"\ncommand = "node"\nargs = ["./mcp.js"]\n[vendor.claude.config]\nnotes = "claude"\n[vendor.codex.config]\nenabled = true\n[vendor.opencode.config]\nreadOnly = true\n',
       'utf8'
     );
+    await writeFile(
+      path.join(root, '.rac/mcps/remote-server.toml'),
+      'id = "remote-server"\nurl = "https://example.test/mcp"\n[vendor.claude.config]\ntype = "sse"\n[vendor.codex.config]\ntype = "streamable-http"\n[vendor.opencode.config]\nreadOnly = true\n',
+      'utf8'
+    );
     await install({ cwd: root, targets: ['claude', 'codex', 'opencode'], kinds: ['mcp'] });
 
     const claudeProject = JSON.parse(await readFile(path.join(root, '.mcp.json'), 'utf8')) as { mcpServers: Record<string, Record<string, unknown>> };
     expect(claudeProject.mcpServers.server.notes).toBe('claude');
+    expect(claudeProject.mcpServers['remote-server']).toEqual({
+      type: 'sse',
+      url: 'https://example.test/mcp'
+    });
 
     const codexToml = await readFile(path.join(root, '.codex/config.toml'), 'utf8');
     expect(codexToml).toContain('enabled = true');
+    expect(codexToml).toContain('[mcp_servers.remote-server]');
+    expect(codexToml).toContain('type = "streamable-http"');
+    expect(codexToml).toContain('url = "https://example.test/mcp"');
 
     const opencode = await readJsoncFile<{ mcp: Record<string, Record<string, unknown>> }>(path.join(root, '.opencode/opencode.jsonc'));
     expect(opencode.mcp.server.readOnly).toBe(true);
+    expect(opencode.mcp['remote-server'].readOnly).toBe(true);
   });
 
   it('vendor pass-through: skill vendor.<target>.config overlays markdown frontmatter for claude/codex/opencode', async () => {
