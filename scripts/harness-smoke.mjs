@@ -43,8 +43,52 @@ async function setupProjectScope(sampleRepo) {
   );
 
   await runCli(sampleRepo, ['doctor', '--kind', 'mcp']);
-  await runCli(sampleRepo, ['install', '--target', 'codex']);
-  await runCli(sampleRepo, ['install', '--target', 'claude,opencode']);
+  await runCli(sampleRepo, ['install', '--targets', 'codex']);
+  await runCli(sampleRepo, ['install', '--targets', 'claude,opencode']);
+  await runCli(sampleRepo, ['install', '--check']);
+}
+
+async function assertAbsent(filePath, label) {
+  try {
+    await access(filePath);
+    throw new Error(`expected ${label} to be absent but it exists: ${filePath}`);
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err;
+    // file is absent as expected
+  }
+}
+
+async function setupConfigTargetsScope(sampleRepo) {
+  await mkdir(sampleRepo, { recursive: true });
+
+  // 1. init
+  await runCli(sampleRepo, ['init']);
+
+  // 2. Write config restricting to codex only
+  await writeFile(
+    path.join(sampleRepo, '.rac', 'config.toml'),
+    '[install]\ntargets = ["codex"]\n',
+    'utf8'
+  );
+
+  // 3. Run install with NO --targets flag (config should drive target selection)
+  await runCli(sampleRepo, ['install']);
+
+  // 4a. Assert codex outputs exist
+  await stat(path.join(sampleRepo, '.codex', 'rules', 'wrapper-deny.rules'));
+  await stat(path.join(sampleRepo, '.codex', 'config.toml'));
+
+  // 4b. Assert claude and opencode outputs do NOT exist
+  await assertAbsent(path.join(sampleRepo, '.mcp.json'), 'claude .mcp.json');
+  await assertAbsent(path.join(sampleRepo, '.claude', 'settings.json'), 'claude settings.json');
+  await assertAbsent(path.join(sampleRepo, '.opencode', 'opencode.jsonc'), 'opencode opencode.jsonc');
+
+  // 5. Run install --targets claude (CLI override) and assert claude outputs are produced
+  await runCli(sampleRepo, ['install', '--targets', 'claude']);
+  await stat(path.join(sampleRepo, '.mcp.json'));
+  await stat(path.join(sampleRepo, '.claude', 'settings.json'));
+
+  // 6. Run install --check to confirm idempotency
   await runCli(sampleRepo, ['install', '--check']);
 }
 
@@ -146,6 +190,7 @@ async function main() {
 
   const tmpRoot = await mkdtemp(path.join(os.tmpdir(), 'rac-harness-'));
   const sampleRepo = path.join(tmpRoot, 'sample-repo');
+  const configTargetsRepo = path.join(tmpRoot, 'config-targets-repo');
 
   try {
     await setupProjectScope(sampleRepo);
@@ -153,6 +198,8 @@ async function main() {
     await checkCodexProject(sampleRepo);
     await checkClaudeProject(sampleRepo);
     await checkOpenCodeProject(sampleRepo);
+
+    await setupConfigTargetsScope(configTargetsRepo);
 
     const userScope = await setupUserScope(tmpRoot, { preSeed: true });
     await assertMergePreservedUserKeys(userScope.userHome, userScope.xdgConfig);

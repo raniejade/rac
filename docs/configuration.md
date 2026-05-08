@@ -228,7 +228,7 @@ Control which agent runtimes are installed to by setting `targets` under `[insta
 targets = ["claude", "codex"]
 ```
 
-Accepted values are `claude`, `codex`, and `opencode`. The CLI `--target` flag overrides this when both are set. If neither CLI nor config sets targets, all three targets are used as the default. An empty array `targets = []` is accepted and means "no targets — nothing is installed".
+Accepted values are `claude`, `codex`, and `opencode`. The CLI `--targets` flag overrides this when both are set. If neither CLI nor config sets targets, all three targets are used as the default. An empty array `targets = []` is accepted and means "no targets — nothing is installed".
 
 ### Merge Behavior
 
@@ -272,19 +272,19 @@ rac init [--empty] [--scope project|user]
 Validate definitions and print warnings.
 
 ```bash
-rac doctor [--target claude,codex,opencode] [--kind agent,skill,mcp,rule,config] [--scope project|user]
+rac doctor [--targets claude,codex,opencode] [--kind agent,skill,mcp,rule,config] [--scope project|user]
 ```
 
 - Prints `ok` when no warnings are found.
 - Warns for missing MCP env vars.
-- Warns for legacy OpenCode vendor tools when `--target` includes `opencode` and `--kind` includes `agent`.
+- Warns for legacy OpenCode vendor tools when `--targets` includes `opencode` and `--kind` includes `agent`.
 
 ### `install`
 
 Generate and install selected definitions.
 
 ```bash
-rac install [--target claude,codex,opencode] [--kind agent,skill,mcp,rule,config] [--dry-run] [--clean] [--check] [--force] [--refresh-packs] [--scope project|user] [--no-merge]
+rac install [--targets claude,codex,opencode] [--kind agent,skill,mcp,rule,config] [--dry-run] [--clean] [--check] [--force] [--refresh-packs] [--scope project|user] [--no-merge]
 ```
 
 - `--dry-run`: previews planned create/update paths and performs no writes.
@@ -295,7 +295,7 @@ rac install [--target claude,codex,opencode] [--kind agent,skill,mcp,rule,config
 - `--scope`: see [Install Scopes](install-scopes.md). Default `project`.
 - `--no-merge`: write adapter-generated content for shared config files wholesale instead of surgically merging into existing user keys.
 
-Defaults: omitting `--target` applies all targets; omitting `--kind` applies all kinds.
+Defaults: omitting `--targets` applies all targets; omitting `--kind` applies all kinds.
 
 Without `--force`, overwrite rules are:
 
@@ -399,8 +399,8 @@ rac install --clean
 
 Guidelines:
 
-- Use `--target` and `--kind` during incremental rollout.
-- If omitted, `--target` and `--kind` apply all targets/kinds.
+- Use `--targets` and `--kind` during incremental rollout.
+- If omitted, `--targets` and `--kind` apply all targets/kinds.
 - Use `--clean` only after reviewing current definitions and managed outputs.
 - Use `--force` only when you intentionally want to replace unmanaged files.
 
