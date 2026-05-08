@@ -37,6 +37,47 @@ npx github:raniejade/rac install --dry-run
 npx github:raniejade/rac install
 ```
 
+For a global install that applies to all projects, see [Scopes](#scopes).
+
+## Scopes
+
+`init`, `install`, and `doctor` accept `--scope project|user` (default `project`).
+
+- **project** (default): source = `<cwd>/.rac/`, target = `<cwd>/.{claude,codex,opencode}/...`. Same as the historical behavior.
+- **user**: source = `~/.rac/`, target = `~/.{claude,codex}/`, `~/.agents/`, `~/.claude.json`, `~/.claude/settings.json`, and `$XDG_CONFIG_HOME/opencode/` (default `~/.config/opencode/`). Tools pick these up as their global config.
+
+```bash
+# Scaffold a global ~/.rac/ tree
+rac init --scope user
+
+# Install user-scope outputs from ~/.rac/
+rac install --scope user
+```
+
+`RAC_HOME` overrides `~` for both source and targets (useful for tests and relocation). `XDG_CONFIG_HOME` is honored for opencode user-scope output.
+
+### Surgical merge for shared config files
+
+Codex `config.toml`, claude `.mcp.json`/`.claude.json`, claude `settings.json`, and opencode `opencode.jsonc` are co-owned with the user (especially at user scope, where they hold things like codex `approval_policy` or `[projects."..."]` trusted folders). On install, rac surgically merges only the keys it owns:
+
+| File | rac owns |
+|---|---|
+| codex `config.toml` | `[mcp_servers.<id>]` |
+| claude `.mcp.json` / `.claude.json` | `mcpServers.<id>` |
+| claude `settings.json` | specific entries in `permissions.deny[]` |
+| opencode `opencode.jsonc` | `mcp.<id>` and `permission.bash.<cmd>` entries |
+
+Everything else in those files is preserved. Ownership is tracked in the per-target install manifest.
+
+To bypass merging and write rac's content wholesale, use `install --no-merge` (subject to the same `--force` rules as before for unmanaged files), or set it persistently in `.rac/config.toml`:
+
+```toml
+[install]
+merge = false
+```
+
+CLI `--no-merge` wins over the config setting.
+
 ## Source Layout (`.rac/`)
 
 ```text
@@ -197,17 +238,18 @@ Use `npx github:raniejade/rac ...` to run from GitHub, or replace it with `rac .
 Create `.rac` folders and optional starter examples.
 
 ```bash
-rac init [--empty]
+rac init [--empty] [--scope project|user]
 ```
 
 - `--empty`: only create folders, skip starter sample files
+- `--scope`: `project` (default) scaffolds `<cwd>/.rac/`; `user` scaffolds `~/.rac/`.
 
 ### `doctor`
 
 Validate definitions and print warnings.
 
 ```bash
-rac doctor [--target claude,codex,opencode] [--kind agent,skill,mcp,rule]
+rac doctor [--target claude,codex,opencode] [--kind agent,skill,mcp,rule] [--scope project|user]
 ```
 
 - Prints `ok` when no warnings are found.
@@ -219,23 +261,28 @@ rac doctor [--target claude,codex,opencode] [--kind agent,skill,mcp,rule]
 Generate and install selected definitions.
 
 ```bash
-rac install [--target claude,codex,opencode] [--kind agent,skill,mcp,rule] [--dry-run] [--clean] [--check] [--force]
+rac install [--target claude,codex,opencode] [--kind agent,skill,mcp,rule] [--dry-run] [--clean] [--check] [--force] [--scope project|user] [--no-merge]
 ```
 
 - `--dry-run`: previews planned create/update paths and performs no writes.
 - `--clean`: deletes stale managed files for selected target+kind.
 - `--check`: verifies generated outputs/manifests are up to date without writing or deleting.
 - `--force`: allows overwrite of unmanaged files.
+- `--scope`: see [Scopes](#scopes). Default `project`.
+- `--no-merge`: write adapter-generated content for shared config files wholesale instead of surgically merging into existing user keys. Subject to the same `--force` rules for unmanaged files. Equivalent to `[install] merge = false` in `.rac/config.toml`; the CLI flag wins.
 
 Defaults: omitting `--target` applies all targets; omitting `--kind` applies all kinds.
 
 Without `--force`, overwrite rules are:
 
 - allowed: manifest-owned files
+- allowed: shared config files with a registered merge strategy (codex `config.toml`, claude `.mcp.json`/`.claude.json`, claude `settings.json`, opencode `opencode.jsonc`) — rac surgically replaces only its owned keys; user keys are preserved
 - allowed: TOML/JSONC files with RAC managed warning at byte 0
 - allowed: markdown files with YAML frontmatter at byte 0 and RAC managed marker immediately after the closing frontmatter
 - blocked: unmanaged JSON files
 - blocked: other unmanaged files without markers
+
+When `--no-merge` is set, the merge-strategy allowance is skipped — those files behave like any other and require manifest ownership or `--force`.
 
 ### `pack add`
 
@@ -278,12 +325,14 @@ Manifest behavior:
 - Generated output paths and manifest record paths must resolve inside the project root before overwrite checks, writes, check comparisons, manifest save/delete, and clean deletes.
 - Dynamic JSON selectors use bracket-safe JSONPath (`$["..."]["..."]`), and Codex MCP table keys use quoted TOML keys.
 
+Project-scope paths are listed below. Under `--scope user`, replace the leading `.` with `~/.` (e.g. `.codex/...` → `~/.codex/...`); claude MCP relPath becomes `~/.claude.json`; opencode paths move to `$XDG_CONFIG_HOME/opencode/...` (no leading dot).
+
 ### Claude
 
 - Agents: `.claude/agents/<id>.md`
 - Skills: `.claude/skills/<id>/SKILL.md` + skill assets
-- MCP:
-  - `.mcp.json`
+- MCP: `.mcp.json` (project) / `~/.claude.json` (user)
+- Rules: `.claude/settings.json` (project: rac-owned file; user: surgical merge into user file)
 - Install manifest: `.claude/.rac-install-manifest.json`
 
 ### Codex
@@ -292,17 +341,17 @@ Manifest behavior:
 - Skills: `.agents/skills/<id>/SKILL.md` + skill assets
 - MCP: `.codex/config.toml`
 - Rules: `.codex/rules/<source-file-stem>.rules`
-- Codex MCP entries are emitted as quoted table keys (for example `[mcp_servers."id.with spaces"]`).
+- Codex MCP entries are emitted as TOML tables (for example `[mcp_servers.my-server]`).
 - Install manifests:
   - agents + mcps: `.codex/.rac-install-manifest.json`
   - skills: `.agents/.rac-install-manifest.json`
 
 ### OpenCode
 
-- Agents: `.opencode/agents/<id>.md`
+- Agents: `.opencode/agents/<id>.md` (project) / `$XDG_CONFIG_HOME/opencode/agents/<id>.md` (user)
 - Skills: `.opencode/skills/<id>/SKILL.md` + skill assets
-- MCP + rules config: `.opencode/opencode.jsonc` (rules render as `permission.bash` command-pattern keys mapped to `"deny"`)
-- Install manifest: `.opencode/.rac-install-manifest.json`
+- MCP + rules config: `.opencode/opencode.jsonc` (project) / `$XDG_CONFIG_HOME/opencode/opencode.jsonc` (user). Rules render as `permission.bash` command-pattern keys mapped to `"deny"`.
+- Install manifest: `.opencode/.rac-install-manifest.json` (project) / `opencode/.rac-install-manifest.json` under `$XDG_CONFIG_HOME` (user)
 
 ## Safe Install Workflow
 
@@ -315,8 +364,11 @@ rac pack add platform-rules github:owner/repo --ref main
 # Validate definitions
 rac doctor
 
-# Apply selected targets/kinds
+# Apply selected targets/kinds (project scope)
 rac install
+
+# Or apply globally to ~/
+rac install --scope user
 
 # Remove a shared pack when retiring it
 rac pack remove platform-rules
@@ -355,5 +407,9 @@ Guidelines:
   - Set required environment variables before running downstream tools.
 
 - `refusing overwrite unmanaged file: <path>`
-  - File exists and is not managed by `rac` manifest markers.
-  - Either migrate/delete it manually, or rerun with `--force` if replacement is intentional.
+  - File exists and is not managed by `rac` manifest markers, and either it has no registered merge strategy or `--no-merge` is in effect.
+  - For shared config files (codex `config.toml`, claude `.mcp.json`/`.claude.json`/`settings.json`, opencode `opencode.jsonc`), drop `--no-merge` to let rac surgically merge instead.
+  - Otherwise migrate/delete it manually, or rerun with `--force` if replacement is intentional.
+
+- `refusing to merge malformed codex config.toml: ...`
+  - Existing `~/.codex/config.toml` is not valid TOML. Back the file up and fix it, or rerun with `--no-merge --force` to let rac clobber it.

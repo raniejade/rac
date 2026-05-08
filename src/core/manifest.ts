@@ -19,7 +19,8 @@ const manifestRecordSchema = z.object({
   inventory: z.array(z.object({
     version: z.literal(1),
     format: z.enum(['file', 'json', 'toml', 'markdown']),
-    selector: z.string()
+    selector: z.string(),
+    entries: z.array(z.string()).optional()
   }))
 });
 

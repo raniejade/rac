@@ -2,7 +2,7 @@ import path from 'node:path';
 
 import type { RuntimeConfig, SkillAssetConfig } from '../core/config-model.js';
 import { renderVendorTemplate } from '../core/template.js';
-import type { Kind, ManagedInventoryEntry, Pack, Target } from '../core/types.js';
+import type { Kind, ManagedInventoryEntry, Pack, Scope, Target } from '../core/types.js';
 import { jsonPathBracketSelector, MANAGED_JSONC_WARNING, MANAGED_TOML_WARNING, sha256, tomlQuotedKeySegment } from '../core/util.js';
 
 import { textManagedPayload } from './shared.js';
@@ -24,7 +24,7 @@ export type AdapterOutput = {
 
 export type TargetAdapter = {
   target: Target;
-  plan: (config: RuntimeConfig) => AdapterOutput[];
+  plan: (config: RuntimeConfig, scope: Scope) => AdapterOutput[];
 };
 
 function mergeGeneratedWithVendor(generated: Record<string, unknown>, vendor: Record<string, unknown> | undefined, context: string): Record<string, unknown> {
@@ -52,23 +52,27 @@ function toTomlMultilineBasicString(value: string): string {
   return `"""\n${escaped}"""`;
 }
 
-export function vendorManifestRelPath(target: Target, kind: Kind): string {
+export function vendorManifestRelPath(target: Target, kind: Kind, scope: Scope = 'project'): string {
   if (target === 'claude') return '.claude/.rac-install-manifest.json';
-  if (target === 'opencode') return '.opencode/.rac-install-manifest.json';
+  if (target === 'opencode') return `${opencodeDirFor(scope)}/.rac-install-manifest.json`;
   if (kind === 'skill') return '.agents/.rac-install-manifest.json';
   return '.codex/.rac-install-manifest.json';
 }
 
-function skillAssetTargetPath(target: Target, skillId: string, asset: SkillAssetConfig): string {
+function opencodeDirFor(scope: Scope): string {
+  return scope === 'user' ? 'opencode' : '.opencode';
+}
+
+function skillAssetTargetPath(target: Target, skillId: string, asset: SkillAssetConfig, scope: Scope): string {
   if (target === 'claude') return path.posix.join('.claude/skills', skillId, asset.relativePath);
   if (target === 'codex') return path.posix.join('.agents/skills', skillId, asset.relativePath);
-  return path.posix.join('.opencode/skills', skillId, asset.relativePath);
+  return path.posix.join(opencodeDirFor(scope), 'skills', skillId, asset.relativePath);
 }
 
 function claudeAdapter(): TargetAdapter {
   return {
     target: 'claude',
-    plan(config) {
+    plan(config, scope) {
       const outputs: AdapterOutput[] = [];
 
       for (const agent of config.agents) {
@@ -80,7 +84,7 @@ function claudeAdapter(): TargetAdapter {
         const instructions = agent.instructionsIsTemplate ? renderVendorTemplate(agent.instructions, 'claude', `agent ${agent.id}`) : agent.instructions;
         const content = textManagedPayload(frontmatter, instructions);
         const relPath = `.claude/agents/${agent.id}.md`;
-        outputs.push({ pack: agent.pack, target: 'claude', kind: 'agent', id: agent.id, source: agent.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('claude', 'agent'), inventory: [{ version: 1, format: 'markdown', selector: '$' }], content, hash: sha256(content), isJson: false });
+        outputs.push({ pack: agent.pack, target: 'claude', kind: 'agent', id: agent.id, source: agent.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('claude', 'agent', scope), inventory: [{ version: 1, format: 'markdown', selector: '$' }], content, hash: sha256(content), isJson: false });
       }
 
       for (const skill of config.skills) {
@@ -88,15 +92,15 @@ function claudeAdapter(): TargetAdapter {
         const body = skill.bodyIsTemplate ? renderVendorTemplate(skill.body, 'claude', `skill ${skill.id}`) : skill.body;
         const content = textManagedPayload(frontmatter, body);
         const relPath = `.claude/skills/${skill.id}/SKILL.md`;
-        outputs.push({ pack: skill.pack, target: 'claude', kind: 'skill', id: skill.id, source: skill.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('claude', 'skill'), inventory: [{ version: 1, format: 'markdown', selector: '$' }], content, hash: sha256(content), isJson: false });
+        outputs.push({ pack: skill.pack, target: 'claude', kind: 'skill', id: skill.id, source: skill.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('claude', 'skill', scope), inventory: [{ version: 1, format: 'markdown', selector: '$' }], content, hash: sha256(content), isJson: false });
         for (const asset of skill.assets) {
-          const relPath = skillAssetTargetPath('claude', skill.id, asset);
-          outputs.push({ pack: asset.pack, target: 'claude', kind: 'skill', id: skill.id, source: asset.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('claude', 'skill'), inventory: [{ version: 1, format: 'file', selector: '$' }], sourceFile: asset.source.absPath, hash: asset.hash, isJson: false });
+          const relPath = skillAssetTargetPath('claude', skill.id, asset, scope);
+          outputs.push({ pack: asset.pack, target: 'claude', kind: 'skill', id: skill.id, source: asset.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('claude', 'skill', scope), inventory: [{ version: 1, format: 'file', selector: '$' }], sourceFile: asset.source.absPath, hash: asset.hash, isJson: false });
         }
       }
 
       if (config.mcps.length > 0) {
-        const relPath = '.mcp.json';
+        const relPath = scope === 'user' ? '.claude.json' : '.mcp.json';
         const mcpServers = Object.fromEntries([...config.mcps].sort((a, b) => a.id.localeCompare(b.id)).map((mcp) => [
           mcp.id,
           mergeGeneratedWithVendor(mcp.transport.kind === 'local'
@@ -106,14 +110,16 @@ function claudeAdapter(): TargetAdapter {
         ]));
         const content = `${JSON.stringify({ mcpServers }, null, 2)}\n`;
         for (const mcp of config.mcps) {
-          outputs.push({ pack: mcp.pack, target: 'claude', kind: 'mcp', id: mcp.id, source: mcp.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('claude', 'mcp'), inventory: [{ version: 1, format: 'json', selector: jsonPathBracketSelector(['mcpServers', mcp.id]) }], content, hash: sha256(content), isJson: true });
+          outputs.push({ pack: mcp.pack, target: 'claude', kind: 'mcp', id: mcp.id, source: mcp.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('claude', 'mcp', scope), inventory: [{ version: 1, format: 'json', selector: jsonPathBracketSelector(['mcpServers', mcp.id]) }], content, hash: sha256(content), isJson: true });
         }
       }
 
       if (config.rules.length > 0) {
         const relPath = '.claude/settings.json';
         const deny: string[] = [];
+        const entriesByRuleId = new Map<string, string[]>();
         for (const rule of [...config.rules].sort((a, b) => a.id.localeCompare(b.id))) {
+          const ruleEntries: string[] = [];
           for (const tool of rule.tools) {
             const segments = tool.pattern.map((segment) => Array.isArray(segment) ? segment : [segment]);
             const expanded = segments.reduce<string[][]>((acc, options) => {
@@ -122,13 +128,16 @@ function claudeAdapter(): TargetAdapter {
               return next;
             }, [[]]);
             for (const command of expanded) {
-              deny.push(`Bash(${command.join(' ')}${tool.appendWildcard ? ' *' : ''})`);
+              const entry = `Bash(${command.join(' ')}${tool.appendWildcard ? ' *' : ''})`;
+              deny.push(entry);
+              ruleEntries.push(entry);
             }
           }
+          entriesByRuleId.set(rule.id, ruleEntries);
         }
         const content = `${JSON.stringify({ permissions: { deny } }, null, 2)}\n`;
         for (const rule of config.rules) {
-          outputs.push({ pack: rule.pack, target: 'claude', kind: 'rule', id: rule.id, source: rule.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('claude', 'rule'), inventory: [{ version: 1, format: 'json', selector: '$.permissions.deny' }], content, hash: sha256(content), isJson: true });
+          outputs.push({ pack: rule.pack, target: 'claude', kind: 'rule', id: rule.id, source: rule.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('claude', 'rule', scope), inventory: [{ version: 1, format: 'json', selector: '$.permissions.deny', entries: entriesByRuleId.get(rule.id) ?? [] }], content, hash: sha256(content), isJson: true });
         }
       }
 
@@ -168,7 +177,7 @@ function codexAdapter(): TargetAdapter {
 
   return {
     target: 'codex',
-    plan(config) {
+    plan(config, scope) {
       const outputs: AdapterOutput[] = [];
 
       for (const agent of config.agents) {
@@ -189,17 +198,17 @@ function codexAdapter(): TargetAdapter {
         }
         const content = `${lines.join('\n')}\n`;
         const relPath = `.codex/agents/${agent.id}.toml`;
-        outputs.push({ pack: agent.pack, target: 'codex', kind: 'agent', id: agent.id, source: agent.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('codex', 'agent'), inventory: [{ version: 1, format: 'toml', selector: '$' }], content, hash: sha256(content), isJson: false });
+        outputs.push({ pack: agent.pack, target: 'codex', kind: 'agent', id: agent.id, source: agent.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('codex', 'agent', scope), inventory: [{ version: 1, format: 'toml', selector: '$' }], content, hash: sha256(content), isJson: false });
       }
 
       for (const skill of config.skills) {
         const body = skill.bodyIsTemplate ? renderVendorTemplate(skill.body, 'codex', `skill ${skill.id}`) : skill.body;
         const content = textManagedPayload(skill.codexFrontmatter ?? skill.frontmatter, body);
         const relPath = `.agents/skills/${skill.id}/SKILL.md`;
-        outputs.push({ pack: skill.pack, target: 'codex', kind: 'skill', id: skill.id, source: skill.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('codex', 'skill'), inventory: [{ version: 1, format: 'markdown', selector: '$' }], content, hash: sha256(content), isJson: false });
+        outputs.push({ pack: skill.pack, target: 'codex', kind: 'skill', id: skill.id, source: skill.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('codex', 'skill', scope), inventory: [{ version: 1, format: 'markdown', selector: '$' }], content, hash: sha256(content), isJson: false });
         for (const asset of skill.assets) {
-          const relPath = skillAssetTargetPath('codex', skill.id, asset);
-          outputs.push({ pack: asset.pack, target: 'codex', kind: 'skill', id: skill.id, source: asset.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('codex', 'skill'), inventory: [{ version: 1, format: 'file', selector: '$' }], sourceFile: asset.source.absPath, hash: asset.hash, isJson: false });
+          const relPath = skillAssetTargetPath('codex', skill.id, asset, scope);
+          outputs.push({ pack: asset.pack, target: 'codex', kind: 'skill', id: skill.id, source: asset.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('codex', 'skill', scope), inventory: [{ version: 1, format: 'file', selector: '$' }], sourceFile: asset.source.absPath, hash: asset.hash, isJson: false });
         }
       }
 
@@ -218,7 +227,7 @@ function codexAdapter(): TargetAdapter {
         const content = `${lines.join('\n').trimEnd()}\n`;
         for (const mcp of config.mcps) {
           const relPath = '.codex/config.toml';
-          outputs.push({ pack: mcp.pack, target: 'codex', kind: 'mcp', id: mcp.id, source: mcp.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('codex', 'mcp'), inventory: [{ version: 1, format: 'toml', selector: `mcp_servers.${tomlQuotedKeySegment(mcp.id)}` }], content, hash: sha256(content), isJson: false });
+          outputs.push({ pack: mcp.pack, target: 'codex', kind: 'mcp', id: mcp.id, source: mcp.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('codex', 'mcp', scope), inventory: [{ version: 1, format: 'toml', selector: `mcp_servers.${tomlQuotedKeySegment(mcp.id)}` }], content, hash: sha256(content), isJson: false });
         }
       }
 
@@ -243,7 +252,7 @@ function codexAdapter(): TargetAdapter {
           const sourceFile = `${path.basename(source, path.extname(source))}.rules`;
           const relPath = `.codex/rules/${sourceFile}`;
           for (const rule of sourceRules) {
-            outputs.push({ pack: rule.pack, target: 'codex', kind: 'rule', id: rule.id, source: rule.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('codex', 'rule'), inventory: [{ version: 1, format: 'file', selector: '$' }], content, hash: sha256(content), isJson: false });
+            outputs.push({ pack: rule.pack, target: 'codex', kind: 'rule', id: rule.id, source: rule.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('codex', 'rule', scope), inventory: [{ version: 1, format: 'file', selector: '$' }], content, hash: sha256(content), isJson: false });
           }
         }
       }
@@ -256,8 +265,9 @@ function codexAdapter(): TargetAdapter {
 function opencodeAdapter(): TargetAdapter {
   return {
     target: 'opencode',
-    plan(config) {
+    plan(config, scope) {
       const outputs: AdapterOutput[] = [];
+      const ocDir = opencodeDirFor(scope);
 
       for (const agent of config.agents) {
         const frontmatter = mergeGeneratedWithVendor(
@@ -267,18 +277,18 @@ function opencodeAdapter(): TargetAdapter {
         );
         const instructions = agent.instructionsIsTemplate ? renderVendorTemplate(agent.instructions, 'opencode', `agent ${agent.id}`) : agent.instructions;
         const content = textManagedPayload(frontmatter, instructions);
-        const relPath = `.opencode/agents/${agent.id}.md`;
-        outputs.push({ pack: agent.pack, target: 'opencode', kind: 'agent', id: agent.id, source: agent.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('opencode', 'agent'), inventory: [{ version: 1, format: 'markdown', selector: '$' }], content, hash: sha256(content), isJson: false });
+        const relPath = `${ocDir}/agents/${agent.id}.md`;
+        outputs.push({ pack: agent.pack, target: 'opencode', kind: 'agent', id: agent.id, source: agent.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('opencode', 'agent', scope), inventory: [{ version: 1, format: 'markdown', selector: '$' }], content, hash: sha256(content), isJson: false });
       }
 
       for (const skill of config.skills) {
         const body = skill.bodyIsTemplate ? renderVendorTemplate(skill.body, 'opencode', `skill ${skill.id}`) : skill.body;
         const content = textManagedPayload(skill.opencodeFrontmatter ?? skill.frontmatter, body);
-        const relPath = `.opencode/skills/${skill.id}/SKILL.md`;
-        outputs.push({ pack: skill.pack, target: 'opencode', kind: 'skill', id: skill.id, source: skill.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('opencode', 'skill'), inventory: [{ version: 1, format: 'markdown', selector: '$' }], content, hash: sha256(content), isJson: false });
+        const relPath = `${ocDir}/skills/${skill.id}/SKILL.md`;
+        outputs.push({ pack: skill.pack, target: 'opencode', kind: 'skill', id: skill.id, source: skill.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('opencode', 'skill', scope), inventory: [{ version: 1, format: 'markdown', selector: '$' }], content, hash: sha256(content), isJson: false });
         for (const asset of skill.assets) {
-          const relPath = skillAssetTargetPath('opencode', skill.id, asset);
-          outputs.push({ pack: asset.pack, target: 'opencode', kind: 'skill', id: skill.id, source: asset.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('opencode', 'skill'), inventory: [{ version: 1, format: 'file', selector: '$' }], sourceFile: asset.source.absPath, hash: asset.hash, isJson: false });
+          const relPath = skillAssetTargetPath('opencode', skill.id, asset, scope);
+          outputs.push({ pack: asset.pack, target: 'opencode', kind: 'skill', id: skill.id, source: asset.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('opencode', 'skill', scope), inventory: [{ version: 1, format: 'file', selector: '$' }], sourceFile: asset.source.absPath, hash: asset.hash, isJson: false });
         }
       }
 
@@ -292,7 +302,9 @@ function opencodeAdapter(): TargetAdapter {
           )
         ]));
         const bashDenyCommands = new Set<string>();
+        const entriesByRuleId = new Map<string, string[]>();
         for (const rule of [...config.rules].sort((a, b) => a.id.localeCompare(b.id))) {
+          const ruleEntries: string[] = [];
           for (const tool of rule.tools) {
             const segments = tool.pattern.map((segment) => Array.isArray(segment) ? segment : [segment]);
             const expanded = segments.reduce<string[][]>((acc, options) => {
@@ -301,9 +313,12 @@ function opencodeAdapter(): TargetAdapter {
               return next;
             }, [[]]);
             for (const command of expanded) {
-              bashDenyCommands.add(`${command.join(' ')}${tool.appendWildcard ? ' *' : ''}`);
+              const entry = `${command.join(' ')}${tool.appendWildcard ? ' *' : ''}`;
+              bashDenyCommands.add(entry);
+              ruleEntries.push(entry);
             }
           }
+          entriesByRuleId.set(rule.id, ruleEntries);
         }
         const bash = Object.fromEntries(
           [...bashDenyCommands]
@@ -311,13 +326,12 @@ function opencodeAdapter(): TargetAdapter {
             .map((command) => [command, 'deny'])
         );
         const content = `${MANAGED_JSONC_WARNING}\n${JSON.stringify({ ...(config.mcps.length > 0 ? { mcp } : {}), ...(config.rules.length > 0 ? { permission: { bash } } : {}) }, null, 2)}\n`;
+        const sharedRelPath = `${ocDir}/opencode.jsonc`;
         for (const server of config.mcps) {
-          const relPath = '.opencode/opencode.jsonc';
-          outputs.push({ pack: server.pack, target: 'opencode', kind: 'mcp', id: server.id, source: server.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('opencode', 'mcp'), inventory: [{ version: 1, format: 'json', selector: jsonPathBracketSelector(['mcp', server.id]) }], content, hash: sha256(content), isJson: true });
+          outputs.push({ pack: server.pack, target: 'opencode', kind: 'mcp', id: server.id, source: server.source.relPath, relPath: sharedRelPath, manifestRelPath: vendorManifestRelPath('opencode', 'mcp', scope), inventory: [{ version: 1, format: 'json', selector: jsonPathBracketSelector(['mcp', server.id]) }], content, hash: sha256(content), isJson: true });
         }
         for (const rule of config.rules) {
-          const relPath = '.opencode/opencode.jsonc';
-          outputs.push({ pack: rule.pack, target: 'opencode', kind: 'rule', id: rule.id, source: rule.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('opencode', 'rule'), inventory: [{ version: 1, format: 'json', selector: '$.permission.bash' }], content, hash: sha256(content), isJson: true });
+          outputs.push({ pack: rule.pack, target: 'opencode', kind: 'rule', id: rule.id, source: rule.source.relPath, relPath: sharedRelPath, manifestRelPath: vendorManifestRelPath('opencode', 'rule', scope), inventory: [{ version: 1, format: 'json', selector: '$.permission.bash', entries: entriesByRuleId.get(rule.id) ?? [] }], content, hash: sha256(content), isJson: true });
         }
       }
 
