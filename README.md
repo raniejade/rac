@@ -69,3 +69,9 @@ Pack commands edit the current project's `.rac/config.toml`.
 - [Install Scopes](docs/install-scopes.md): project scope, user scope, dotfiles workflow, and output paths.
 - [Configuration](docs/configuration.md): `.rac/` layout, definition schemas, commands, merge behavior, shared packs, target outputs, and troubleshooting.
 - [Architecture](docs/architecture.md): internal pipeline and ownership boundaries.
+
+## Verification
+
+```bash
+docker build -f docker/smoke.Dockerfile --target smoke-test -t rac-smoke-test .
+```
