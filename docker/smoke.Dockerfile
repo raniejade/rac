@@ -11,12 +11,10 @@ RUN apt-get update \
 
 WORKDIR /app
 
-COPY package.json package-lock.json ./
+COPY . .
 RUN npm ci
 
 RUN npm install -g "$CLAUDE_CODE_VERSION" "$CODEX_VERSION" "$OPENCODE_VERSION"
 RUN claude --version && codex --version && opencode --version
-
-COPY . .
 
 RUN npm run test:harness
