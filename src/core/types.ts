@@ -1,6 +1,6 @@
 export type Pack = string;
 export type Target = 'claude' | 'codex' | 'opencode';
-export type Kind = 'agent' | 'skill' | 'mcp' | 'rule';
+export type Kind = 'agent' | 'skill' | 'mcp' | 'rule' | 'config';
 export type Scope = 'project' | 'user';
 
 export type AgentDef = {
@@ -56,6 +56,18 @@ export type RuleDef = {
   justification: string;
   command: RuleCommandItem[];
   append_wildcard: boolean;
+  sourcePath: string;
+  sourceName: string;
+};
+
+export type VendorConfigSource = 'config' | 'raw' | 'raw_json';
+
+export type VendorConfigDef = {
+  pack: Pack;
+  packRoot: string;
+  target: Target;
+  values: Record<string, unknown>;
+  selectors: string[];
   sourcePath: string;
   sourceName: string;
 };

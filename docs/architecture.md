@@ -18,6 +18,7 @@ Inputs are loaded from the project source root:
 - Required `.rac/config.toml` at every pack root
 - Project mode supports top-level `[[packs]]` entries (`id`, `repo = "github:owner/repo"`, required `ref`)
 - Shared mode rejects any `[[packs]]` (no transitive packs)
+- Vendor-wide `[vendor.<target>.config]`, `[vendor.<target>.raw]`, and `[vendor.<target>.raw_json]` are read only from `.rac/config.toml`
 
 - `agents/*.toml`
 - `skills/*/SKILL.md` with `+++` frontmatter
@@ -55,10 +56,12 @@ Responsibilities:
 - Normalize MCP transport into `local` vs `remote`
 - Normalize rule command patterns into `RuleConfig` + `ToolRuleConfig[]` with literal segments and segment-alternative arrays
 - Normalize vendor pass-through maps:
-- `vendor.<target>.config` for agent/skill/mcp target payload overlays
-- `vendor.<target>.frontmatter` for skill markdown frontmatter overlays
-- skill frontmatter merge order is `base generated/frontmatter -> vendor.<target>.config -> vendor.<target>.frontmatter`
-- skill overlay maps cannot collide with generated keys (`name`, `description`) and cannot duplicate keys across `config` + `frontmatter`
+  - `vendor.<target>.config` for agent/skill/mcp target payload overlays
+  - `vendor.<target>.frontmatter` for skill markdown frontmatter overlays
+  - vendor-wide config selectors from `.rac/config.toml`
+  - skill frontmatter merge order is `base generated/frontmatter -> vendor.<target>.config -> vendor.<target>.frontmatter`
+  - skill overlay maps cannot collide with generated keys (`name`, `description`) and cannot duplicate keys across `config` + `frontmatter`
+- Fail fast on vendor-wide config selector overlap across active packs
 - Enforce generated-key collision rules
 - Collect config warnings as runtime signals
 
@@ -85,13 +88,17 @@ Rule output semantics:
 - Claude: `.claude/settings.json` -> `permissions.deny` entries expanded from alternatives using `Bash(...)`.
 - OpenCode: `.opencode/opencode.jsonc` -> `permission.bash` object entries expanded from alternatives (`{ "<command pattern>": "deny" }`).
 - `append_wildcard` defaults to `true`; when true, adapters append trailing ` *` in string-expanded deny entries.
-- OpenCode writes one combined `.opencode/opencode.jsonc` payload when MCP and rules are both selected.
+- Codex writes one combined `.codex/config.toml` payload when MCP and vendor-wide config are both selected.
+- Claude writes one combined `.claude/settings.json` payload when rules and vendor-wide config are both selected.
+- OpenCode writes one combined `.opencode/opencode.jsonc` payload when MCP, rules, and vendor-wide config are selected.
 
 Responsibilities:
 
 - Define target-relative output paths
 - Render target-specific content formats
 - Apply vendor pass-through overlays verbatim
+- Render vendor-wide config as target-native TOML/JSON/JSONC
+- Reject vendor-wide config selectors that overlap generated MCP/rule ownership in the same shared file
 - Escape dynamic TOML key segments for user IDs (quoted-key form)
 - Emit bracket-safe JSONPath selectors for dynamic user IDs
 - Preserve source metadata + deterministic content hash
@@ -122,14 +129,15 @@ Responsibilities:
 - Write files (content or asset copy) exactly once per destination path
 - Optionally clean stale managed outputs
 - Persist vendor-local install manifests per target/kind:
-- `.claude/.rac-install-manifest.json` (claude agents/skills/mcp)
-- `.codex/.rac-install-manifest.json` (codex agents/mcp)
+- `.claude/.rac-install-manifest.json` (claude agents/skills/mcp/rule/config)
+- `.codex/.rac-install-manifest.json` (codex agents/mcp/rule/config)
 - `.agents/.rac-install-manifest.json` (codex skills)
-- `.opencode/.rac-install-manifest.json` (opencode agents/skills/mcp)
+- `.opencode/.rac-install-manifest.json` (opencode agents/skills/mcp/rule/config)
 
 Safety model:
 
 - Managed ownership is tracked in vendor-local manifests using `relPath` + inventory selectors
+- Shared config merge strategies replace only selected RAC-owned selectors, prune empty generated objects, and preserve unrelated user siblings
 - Manifest identity includes pack ID, so removed shared packs clean as stale outputs
 - Manifest loads are strict-schema validated (missing file only returns empty; invalid schema/JSON/version throws)
 - Adapter output paths, manifest paths, and manifest record `relPath`s must resolve inside project root before overwrite/write/check/save/delete/clean

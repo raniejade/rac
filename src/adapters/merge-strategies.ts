@@ -20,7 +20,8 @@ export interface MergeStrategy {
   merge(ctx: MergeContext): MergeResult;
 }
 
-function parseBracketSelector(selector: string): string[] | undefined {
+function parseSelectorPath(selector: string): string[] | undefined {
+  if (selector.startsWith('$.')) return selector.slice(2).split('.');
   if (!selector.startsWith('$')) return undefined;
   const segments: string[] = [];
   let i = 1;
@@ -58,7 +59,7 @@ function relevantRecords(records: ManifestRecord[], target: Target, kind: Kind):
 }
 
 function selectorMcpId(selector: string, key: 'mcp' | 'mcpServers'): string | undefined {
-  const segs = parseBracketSelector(selector);
+  const segs = parseSelectorPath(selector);
   if (!segs || segs.length !== 2 || segs[0] !== key) return undefined;
   return segs[1];
 }
@@ -78,6 +79,67 @@ function codexMcpIdFromSelector(selector: string): string | undefined {
 
 function inventoryEntries(record: ManifestRecord): string[] {
   return record.inventory[0]?.entries ?? [];
+}
+
+function configSelectorPaths(records: ManifestRecord[], target: Target): string[][] {
+  const paths: string[][] = [];
+  for (const record of relevantRecords(records, target, 'config')) {
+    for (const entry of record.inventory) {
+      const path = parseSelectorPath(entry.selector);
+      if (path) paths.push(path);
+    }
+  }
+  return paths;
+}
+
+function getAtPath(root: Record<string, unknown>, path: string[]): unknown {
+  let cursor: unknown = root;
+  for (const segment of path) {
+    const obj = asObject(cursor);
+    if (!Object.prototype.hasOwnProperty.call(obj, segment)) return undefined;
+    cursor = obj[segment];
+  }
+  return cursor;
+}
+
+function setAtPath(root: Record<string, unknown>, path: string[], value: unknown): void {
+  let cursor = root;
+  for (const segment of path.slice(0, -1)) {
+    const next = cursor[segment];
+    if (!next || typeof next !== 'object' || Array.isArray(next)) cursor[segment] = {};
+    cursor = cursor[segment] as Record<string, unknown>;
+  }
+  cursor[path[path.length - 1]] = value;
+}
+
+function deleteAtPath(root: Record<string, unknown>, path: string[]): void {
+  const parents: Array<{ object: Record<string, unknown>; key: string }> = [];
+  let cursor = root;
+  for (const segment of path.slice(0, -1)) {
+    const next = cursor[segment];
+    if (!next || typeof next !== 'object' || Array.isArray(next)) return;
+    parents.push({ object: cursor, key: segment });
+    cursor = next as Record<string, unknown>;
+  }
+  delete cursor[path[path.length - 1]];
+  for (let i = parents.length - 1; i >= 0; i -= 1) {
+    const { object, key } = parents[i];
+    const child = object[key];
+    if (child && typeof child === 'object' && !Array.isArray(child) && Object.keys(child).length === 0) {
+      delete object[key];
+    } else {
+      break;
+    }
+  }
+}
+
+function applyConfigSelectors(existing: Record<string, unknown>, generated: Record<string, unknown>, ctx: MergeContext, target: Target): void {
+  if (!ctx.selectedKinds.has('config')) return;
+  for (const path of configSelectorPaths(ctx.ownedRecords, target)) deleteAtPath(existing, path);
+  for (const path of configSelectorPaths(ctx.nextRecords, target)) {
+    const value = getAtPath(generated, path);
+    if (value !== undefined) setAtPath(existing, path, value);
+  }
 }
 
 function stableJsonObject(input: Record<string, unknown>, leadingKeys: string[] = []): string {
@@ -122,6 +184,7 @@ export const codexConfigTomlStrategy: MergeStrategy = {
       ? parseToml(ctx.generated) as Record<string, unknown>
       : {};
     const generatedMcps = asObject(generatedTable.mcp_servers);
+    applyConfigSelectors(existing, generatedTable, ctx, 'codex');
 
     const mcpServers = asObject(existing.mcp_servers);
     if (ctx.selectedKinds.has('mcp')) {
@@ -150,6 +213,7 @@ export const claudeMcpJsonStrategy: MergeStrategy = {
   merge(ctx) {
     const existing = parseJsonObject(ctx.existing);
     const generated = parseJsonObject(ctx.generated);
+    applyConfigSelectors(existing, generated, ctx, 'claude');
 
     const prevIds = new Set<string>();
     for (const record of relevantRecords(ctx.ownedRecords, 'claude', 'mcp')) {
@@ -189,6 +253,8 @@ export const claudeSettingsDenyStrategy: MergeStrategy = {
   },
   merge(ctx) {
     const existing = parseJsonObject(ctx.existing);
+    const generated = parseJsonObject(ctx.generated);
+    applyConfigSelectors(existing, generated, ctx, 'claude');
 
     const prevEntries = new Set<string>();
     for (const record of relevantRecords(ctx.ownedRecords, 'claude', 'rule')) {
@@ -235,6 +301,7 @@ export const opencodeSharedJsoncStrategy: MergeStrategy = {
   merge(ctx) {
     const existing = parseJsonObject(ctx.existing);
     const generated = parseJsonObject(ctx.generated);
+    applyConfigSelectors(existing, generated, ctx, 'opencode');
 
     const prevMcpIds = new Set<string>();
     for (const record of relevantRecords(ctx.ownedRecords, 'opencode', 'mcp')) {

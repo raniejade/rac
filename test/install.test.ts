@@ -170,6 +170,129 @@ describe('install + doctor', () => {
     expect(Object.keys(opencode.mcp)).toEqual(['a-remote', 'project-rules', 'z-remote']);
   });
 
+  it('installs vendor-wide config for codex, claude, and opencode with selector manifests', async () => {
+    const root = await makeTmp();
+    await mkdir(path.join(root, '.rac'), { recursive: true });
+    await writeFile(
+      path.join(root, '.rac/config.toml'),
+      '[vendor.codex.config]\nmodel = "gpt-5.5"\nmodel_reasoning_effort = "medium"\n[vendor.codex.config.features]\nmulti_agent = true\n[vendor.claude.raw]\nallowedMcpServers = [{ serverName = "github" }]\n[vendor.opencode.raw_json]\nplugin = """["opencode-plugin-foo", ["opencode-plugin-bar", { "enabled": true }]]"""\n',
+      'utf8'
+    );
+
+    await install({ cwd: root, targets: ['claude', 'codex', 'opencode'], kinds: ['config'] });
+
+    const codex = parseToml(await readFile(path.join(root, '.codex/config.toml'), 'utf8')) as {
+      model?: string;
+      model_reasoning_effort?: string;
+      features?: { multi_agent?: boolean };
+    };
+    expect(codex.model).toBe('gpt-5.5');
+    expect(codex.model_reasoning_effort).toBe('medium');
+    expect(codex.features?.multi_agent).toBe(true);
+
+    const claude = JSON.parse(await readFile(path.join(root, '.claude/settings.json'), 'utf8')) as { allowedMcpServers?: Array<{ serverName?: string }> };
+    expect(claude.allowedMcpServers?.[0]?.serverName).toBe('github');
+
+    const opencodeRaw = await readFile(path.join(root, '.opencode/opencode.jsonc'), 'utf8');
+    expect(opencodeRaw.startsWith(`${MANAGED_JSONC_WARNING}\n`)).toBe(true);
+    const opencode = await readJsoncFile<{ plugin?: unknown[] }>(path.join(root, '.opencode/opencode.jsonc'));
+    expect(opencode.plugin).toEqual(['opencode-plugin-foo', ['opencode-plugin-bar', { enabled: true }]]);
+
+    const codexManifest = JSON.parse(await readFile(path.join(root, '.codex/.rac-install-manifest.json'), 'utf8')) as {
+      records: Array<{ kind: string; id: string; inventory: Array<{ selector: string }> }>;
+    };
+    const codexConfigRecord = codexManifest.records.find((record) => record.kind === 'config');
+    expect(codexConfigRecord?.id).toBe('config');
+    expect(codexConfigRecord?.inventory.map((entry) => entry.selector)).toEqual([
+      '$["model"]',
+      '$["model_reasoning_effort"]',
+      '$["features"]["multi_agent"]'
+    ]);
+  });
+
+  it('merges config with generated mcp/rule shared files and preserves user-owned siblings', async () => {
+    const root = await makeTmp();
+    await seed(root);
+    await writeFile(
+      path.join(root, '.rac/config.toml'),
+      '[vendor.codex.config]\nmodel = "gpt-5.5"\n[vendor.claude.config.ui]\ntheme = "dark"\n[vendor.opencode.config]\nplugin = ["opencode-plugin-foo"]\n',
+      'utf8'
+    );
+    await mkdir(path.join(root, '.codex'), { recursive: true });
+    await mkdir(path.join(root, '.claude'), { recursive: true });
+    await mkdir(path.join(root, '.opencode'), { recursive: true });
+    await writeFile(path.join(root, '.codex/config.toml'), 'approval_policy = "on-request"\n', 'utf8');
+    await writeFile(path.join(root, '.claude/settings.json'), JSON.stringify({ external: true }, null, 2) + '\n', 'utf8');
+    await writeFile(path.join(root, '.opencode/opencode.jsonc'), '{"external":true}\n', 'utf8');
+
+    await install({ cwd: root, targets: ['claude', 'codex', 'opencode'], kinds: ['mcp', 'rule', 'config'] });
+
+    const codex = parseToml(await readFile(path.join(root, '.codex/config.toml'), 'utf8')) as {
+      approval_policy?: string;
+      model?: string;
+      mcp_servers?: Record<string, unknown>;
+    };
+    expect(codex.approval_policy).toBe('on-request');
+    expect(codex.model).toBe('gpt-5.5');
+    expect(codex.mcp_servers?.['project-rules']).toBeTruthy();
+
+    const claude = JSON.parse(await readFile(path.join(root, '.claude/settings.json'), 'utf8')) as {
+      external?: boolean;
+      ui?: { theme?: string };
+      permissions?: { deny?: string[] };
+    };
+    expect(claude.external).toBe(true);
+    expect(claude.ui?.theme).toBe('dark');
+    expect(claude.permissions?.deny).toContain('Bash(git push)');
+
+    const opencode = await readJsoncFile<{
+      external?: boolean;
+      plugin?: string[];
+      mcp?: Record<string, unknown>;
+      permission?: { bash?: Record<string, string> };
+    }>(path.join(root, '.opencode/opencode.jsonc'));
+    expect(opencode.external).toBe(true);
+    expect(opencode.plugin).toEqual(['opencode-plugin-foo']);
+    expect(opencode.mcp?.['project-rules']).toBeTruthy();
+    expect(opencode.permission?.bash?.['git push']).toBe('deny');
+  });
+
+  it('config clean/check/dry-run update only owned selectors', async () => {
+    const root = await makeTmp();
+    await mkdir(path.join(root, '.rac'), { recursive: true });
+    await writeFile(path.join(root, '.rac/config.toml'), '[vendor.codex.config]\nmodel = "gpt-5.5"\n', 'utf8');
+    await mkdir(path.join(root, '.codex'), { recursive: true });
+    await writeFile(path.join(root, '.codex/config.toml'), 'approval_policy = "on-request"\n', 'utf8');
+
+    const dryRun = await install({ cwd: root, targets: ['codex'], kinds: ['config'], dryRun: true });
+    expect(dryRun.update).toContain(path.join(root, '.codex/config.toml'));
+    expect(await readFile(path.join(root, '.codex/config.toml'), 'utf8')).not.toContain('gpt-5.5');
+
+    await install({ cwd: root, targets: ['codex'], kinds: ['config'] });
+    await expect(install({ cwd: root, targets: ['codex'], kinds: ['config'], check: true })).resolves.toBeTruthy();
+
+    await writeFile(path.join(root, '.rac/config.toml'), '', 'utf8');
+    await expect(install({ cwd: root, targets: ['codex'], kinds: ['config'], check: true })).rejects.toThrow('stale managed output requires cleanup');
+    await install({ cwd: root, targets: ['codex'], kinds: ['config'], clean: true });
+    const cleaned = parseToml(await readFile(path.join(root, '.codex/config.toml'), 'utf8')) as { approval_policy?: string; model?: string };
+    expect(cleaned.approval_policy).toBe('on-request');
+    expect(cleaned.model).toBeUndefined();
+  });
+
+  it('rejects config selectors that overlap generated mcp or rule ownership', async () => {
+    const root = await makeTmp();
+    await seed(root);
+
+    await writeFile(path.join(root, '.rac/config.toml'), '[vendor.codex.raw]\nmcp_servers = { other = { command = "node" } }\n', 'utf8');
+    await expect(install({ cwd: root, targets: ['codex'], kinds: ['mcp', 'config'] })).rejects.toThrow('selector conflict');
+
+    await writeFile(path.join(root, '.rac/config.toml'), '[vendor.claude.raw]\npermissions = { allow = ["Bash(ls)"] }\n', 'utf8');
+    await expect(install({ cwd: root, targets: ['claude'], kinds: ['rule', 'config'] })).rejects.toThrow('selector conflict');
+
+    await writeFile(path.join(root, '.rac/config.toml'), '[vendor.opencode.raw]\nmcp = { other = { type = "local" } }\n', 'utf8');
+    await expect(install({ cwd: root, targets: ['opencode'], kinds: ['mcp', 'config'] })).rejects.toThrow('selector conflict');
+  });
+
   it('installs centralized rules for codex/claude/opencode and combines opencode mcp+rule payload', async () => {
     const root = await makeTmp();
     await seed(root);
@@ -419,11 +542,13 @@ describe('install + doctor', () => {
   it('uses escaped toml keys and bracket-safe jsonpath selectors for dynamic ids', async () => {
     const root = await makeTmp();
     await seed(root);
+    await writeFile(path.join(root, '.rac/config.toml'), '[vendor.codex.config]\nmodel = "gpt-5.5"\n', 'utf8');
     await writeFile(path.join(root, '.rac/mcps/special.toml'), 'id = "dot id \\"x\\".日本語"\ncommand = "node"\n', 'utf8');
-    await install({ cwd: root, targets: ['claude', 'codex', 'opencode'], kinds: ['mcp'] });
+    await install({ cwd: root, targets: ['claude', 'codex', 'opencode'], kinds: ['mcp', 'config'] });
 
     const codexToml = await readFile(path.join(root, '.codex/config.toml'), 'utf8');
     expect(codexToml).toContain('[mcp_servers."dot id \\"x\\".日本語"]');
+    expect(codexToml).toContain('model = "gpt-5.5"');
 
     const claudeManifest = JSON.parse(await readFile(path.join(root, '.claude/.rac-install-manifest.json'), 'utf8')) as {
       records: Array<{ id: string; inventory: Array<{ selector: string }> }>;
@@ -792,6 +917,63 @@ describe('install + doctor', () => {
 
       await expect(install({ cwd: root, targets: ['codex'], kinds: ['agent'] })).rejects.toThrow('duplicate agent id across packs');
       await expect(doctor(root, ['codex'], ['agent'])).rejects.toThrow('duplicate agent id across packs');
+    } finally {
+      delete process.env.RAC_CACHE_DIR;
+    }
+  });
+
+  it('loads vendor-wide config from shared packs and rejects cross-pack selector overlap', async () => {
+    if (spawnSync('git', ['--version']).status !== 0) return;
+    const root = await makeTmp();
+    const cacheRoot = path.join(root, '.cache');
+    process.env.RAC_CACHE_DIR = cacheRoot;
+    try {
+      const remote = path.join(root, 'remote');
+      await mkdir(path.join(remote, '.rac'), { recursive: true });
+      await writeFile(
+        path.join(remote, '.rac/config.toml'),
+        '[vendor.codex.config.features]\nshared_pack = true\n[vendor.opencode.config]\nplugin = ["shared-plugin"]\n',
+        'utf8'
+      );
+      spawnSync('git', ['init'], { cwd: remote });
+      spawnSync('git', ['add', '.'], { cwd: remote });
+      spawnSync('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-m', 'init'], { cwd: remote });
+
+      await mkdir(path.join(root, '.rac'), { recursive: true });
+      await writeFile(
+        path.join(root, '.rac/config.toml'),
+        '[vendor.codex.config]\nmodel = "gpt-5.5"\n\n[[packs]]\nid = "shared"\nrepo = "github:owner/repo"\nref = "HEAD"\n',
+        'utf8'
+      );
+
+      const key = Buffer.from('github:owner/repo@HEAD').toString('base64url');
+      const cachedRepo = path.join(cacheRoot, 'packs', key);
+      await mkdir(path.dirname(cachedRepo), { recursive: true });
+      spawnSync('git', ['clone', remote, cachedRepo]);
+
+      await install({ cwd: root, targets: ['codex', 'opencode'], kinds: ['config'] });
+
+      const codex = parseToml(await readFile(path.join(root, '.codex/config.toml'), 'utf8')) as {
+        model?: string;
+        features?: { shared_pack?: boolean };
+      };
+      expect(codex.model).toBe('gpt-5.5');
+      expect(codex.features?.shared_pack).toBe(true);
+
+      const opencode = await readJsoncFile<{ plugin?: string[] }>(path.join(root, '.opencode/opencode.jsonc'));
+      expect(opencode.plugin).toEqual(['shared-plugin']);
+
+      const manifest = JSON.parse(await readFile(path.join(root, '.codex/.rac-install-manifest.json'), 'utf8')) as {
+        records: Array<{ pack: string; kind: string; inventory: Array<{ selector: string }> }>;
+      };
+      expect(manifest.records.some((record) => record.pack === 'shared' && record.kind === 'config' && record.inventory[0]?.selector === '$["features"]["shared_pack"]')).toBe(true);
+
+      await writeFile(
+        path.join(root, '.rac/config.toml'),
+        '[vendor.codex.raw]\nfeatures = { project = true }\n\n[[packs]]\nid = "shared"\nrepo = "github:owner/repo"\nref = "HEAD"\n',
+        'utf8'
+      );
+      await expect(install({ cwd: root, targets: ['codex'], kinds: ['config'] })).rejects.toThrow('vendor config selector overlap for codex');
     } finally {
       delete process.env.RAC_CACHE_DIR;
     }

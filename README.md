@@ -62,10 +62,10 @@ Codex `config.toml`, claude `.mcp.json`/`.claude.json`, claude `settings.json`, 
 
 | File | rac owns |
 |---|---|
-| codex `config.toml` | `[mcp_servers.<id>]` |
+| codex `config.toml` | `[mcp_servers.<id>]` and exact vendor-wide `config` selectors |
 | claude `.mcp.json` / `.claude.json` | `mcpServers.<id>` |
-| claude `settings.json` | specific entries in `permissions.deny[]` |
-| opencode `opencode.jsonc` | `mcp.<id>` and `permission.bash.<cmd>` entries |
+| claude `settings.json` | specific entries in `permissions.deny[]` and exact vendor-wide `config` selectors |
+| opencode `opencode.jsonc` | `mcp.<id>`, `permission.bash.<cmd>`, and exact vendor-wide `config` selectors |
 
 Everything else in those files is preserved. Ownership is tracked in the per-target install manifest.
 
@@ -100,6 +100,7 @@ Definition rules:
 - `.rac/config.toml` is required.
 - Project mode may define top-level `[[packs]]` entries for shared packs.
 - Shared pack mode must keep `.rac/config.toml` present and must not define `[[packs]]`.
+- Vendor-wide target config is sourced only from `.rac/config.toml`.
 
 - Agents: one file per agent in `.rac/agents/*.toml`.
 - Skills: each skill must be in `.rac/skills/<id>/SKILL.md`.
@@ -121,6 +122,34 @@ Vendor overrides:
 - Generated-key collisions fail fast (for example `name`, `description`).
 - Skill installs fail fast when `vendor.<target>.config` and `vendor.<target>.frontmatter` share keys.
 - Codex TOML pass-through values must be strings, numbers, booleans, or arrays; nested objects are rejected.
+
+Vendor-wide config:
+
+- `[vendor.<target>.config]` in `.rac/config.toml` writes mergeable leaf selectors to the target's native shared config file.
+- `[vendor.<target>.raw]` writes whole immediate top-level keys from TOML values.
+- `[vendor.<target>.raw_json]` writes whole immediate top-level keys parsed from TOML strings containing JSON.
+- Supported targets are only `claude`, `codex`, and `opencode`.
+- `config` accepts strings, booleans, finite numbers, nested tables, inline tables, and homogeneous arrays of scalar JSON-compatible values.
+- `raw` accepts JSON-compatible TOML values, including arrays of inline tables.
+- `raw_json` requires valid JSON strings; values that cannot be emitted by the target format are rejected.
+- Exact or ancestor/descendant selector overlap fails fast across `config`, `raw`, `raw_json`, active packs, and generated MCP/rule ownership.
+
+Vendor-wide config example (`.rac/config.toml`):
+
+```toml
+[vendor.codex.config]
+model = "gpt-5.5"
+model_reasoning_effort = "medium"
+
+[vendor.codex.config.features]
+multi_agent = true
+
+[vendor.claude.raw]
+allowedMcpServers = [{ serverName = "github" }]
+
+[vendor.opencode.raw_json]
+plugin = """["opencode-plugin-foo", ["opencode-plugin-bar", { "enabled": true }]]"""
+```
 
 ### Definition File Examples
 
@@ -249,7 +278,7 @@ rac init [--empty] [--scope project|user]
 Validate definitions and print warnings.
 
 ```bash
-rac doctor [--target claude,codex,opencode] [--kind agent,skill,mcp,rule] [--scope project|user]
+rac doctor [--target claude,codex,opencode] [--kind agent,skill,mcp,rule,config] [--scope project|user]
 ```
 
 - Prints `ok` when no warnings are found.
@@ -261,11 +290,11 @@ rac doctor [--target claude,codex,opencode] [--kind agent,skill,mcp,rule] [--sco
 Generate and install selected definitions.
 
 ```bash
-rac install [--target claude,codex,opencode] [--kind agent,skill,mcp,rule] [--dry-run] [--clean] [--check] [--force] [--scope project|user] [--no-merge]
+rac install [--target claude,codex,opencode] [--kind agent,skill,mcp,rule,config] [--dry-run] [--clean] [--check] [--force] [--scope project|user] [--no-merge]
 ```
 
 - `--dry-run`: previews planned create/update paths and performs no writes.
-- `--clean`: deletes stale managed files for selected target+kind.
+- `--clean`: deletes stale managed files or stale shared-file selectors for selected target+kind.
 - `--check`: verifies generated outputs/manifests are up to date without writing or deleting.
 - `--force`: allows overwrite of unmanaged files.
 - `--scope`: see [Scopes](#scopes). Default `project`.
@@ -323,7 +352,7 @@ Manifest behavior:
 - Missing manifest file is treated as empty.
 - Invalid JSON, unsupported version, invalid records, or unsafe manifest record paths fail with `invalid RAC install manifest: <path>: <reason>`.
 - Generated output paths and manifest record paths must resolve inside the project root before overwrite checks, writes, check comparisons, manifest save/delete, and clean deletes.
-- Dynamic JSON selectors use bracket-safe JSONPath (`$["..."]["..."]`), and Codex MCP table keys use quoted TOML keys.
+- Dynamic JSON selectors use bracket-safe JSONPath (`$["..."]["..."]`), vendor-wide config selectors use that same form for JSON and TOML shared files, and Codex MCP table keys use quoted TOML keys.
 
 Project-scope paths are listed below. Under `--scope user`, replace the leading `.` with `~/.` (e.g. `.codex/...` → `~/.codex/...`); claude MCP relPath becomes `~/.claude.json`; opencode paths move to `$XDG_CONFIG_HOME/opencode/...` (no leading dot).
 
@@ -332,25 +361,25 @@ Project-scope paths are listed below. Under `--scope user`, replace the leading 
 - Agents: `.claude/agents/<id>.md`
 - Skills: `.claude/skills/<id>/SKILL.md` + skill assets
 - MCP: `.mcp.json` (project) / `~/.claude.json` (user)
-- Rules: `.claude/settings.json` (project: rac-owned file; user: surgical merge into user file)
+- Rules + config: `.claude/settings.json` (surgical merge; rules own `permissions.deny[]` entries, config owns exact selectors)
 - Install manifest: `.claude/.rac-install-manifest.json`
 
 ### Codex
 
 - Agents: `.codex/agents/<id>.toml`
 - Skills: `.agents/skills/<id>/SKILL.md` + skill assets
-- MCP: `.codex/config.toml`
+- MCP + config: `.codex/config.toml`
 - Rules: `.codex/rules/<source-file-stem>.rules`
-- Codex MCP entries are emitted as TOML tables (for example `[mcp_servers.my-server]`).
+- Codex MCP entries are emitted as TOML tables (for example `[mcp_servers.my-server]`); config emits vendor-native TOML keys/tables.
 - Install manifests:
-  - agents + mcps: `.codex/.rac-install-manifest.json`
+  - agents + mcps + config: `.codex/.rac-install-manifest.json`
   - skills: `.agents/.rac-install-manifest.json`
 
 ### OpenCode
 
 - Agents: `.opencode/agents/<id>.md` (project) / `$XDG_CONFIG_HOME/opencode/agents/<id>.md` (user)
 - Skills: `.opencode/skills/<id>/SKILL.md` + skill assets
-- MCP + rules config: `.opencode/opencode.jsonc` (project) / `$XDG_CONFIG_HOME/opencode/opencode.jsonc` (user). Rules render as `permission.bash` command-pattern keys mapped to `"deny"`.
+- MCP + rules + config: `.opencode/opencode.jsonc` (project) / `$XDG_CONFIG_HOME/opencode/opencode.jsonc` (user). Rules render as `permission.bash` command-pattern keys mapped to `"deny"`.
 - Install manifest: `.opencode/.rac-install-manifest.json` (project) / `opencode/.rac-install-manifest.json` under `$XDG_CONFIG_HOME` (user)
 
 ## Safe Install Workflow
@@ -389,7 +418,7 @@ Guidelines:
 - `invalid target/kind`
   - Use supported values only:
     - target: `claude`, `codex`, `opencode`
-    - kind: `agent`, `skill`, `mcp`, `rule`
+    - kind: `agent`, `skill`, `mcp`, `rule`, `config`
 
 - `refusing to overwrite existing init examples`
   - `init` found starter files already present. Remove/rename them or run with `--empty` if you only need folders.

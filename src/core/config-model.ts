@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { AgentDef, McpDef, Pack, RuleDef, SkillDef } from './types.js';
+import type { AgentDef, McpDef, Pack, RuleDef, SkillDef, Target, VendorConfigDef } from './types.js';
 import { assertNoTraversal, rel } from './util.js';
 
 export type ConfigWarning = {
@@ -78,7 +78,16 @@ export type RuntimeConfig = {
   skills: SkillConfig[];
   mcps: McpConfig[];
   rules: RuleConfig[];
+  configs: VendorConfig[];
   warnings: ConfigWarning[];
+};
+
+export type VendorConfig = {
+  pack: Pack;
+  target: Target;
+  source: SourceInfo;
+  values: Record<string, unknown>;
+  selectors: string[];
 };
 
 export type ToolRuleConfig = {
@@ -101,6 +110,7 @@ export type BuildRuntimeConfigInput = {
   skills: SkillDef[];
   mcps: McpDef[];
   rules: RuleDef[];
+  configs?: VendorConfigDef[];
 };
 
 function sourceInfo(pack: Pack, root: string, absPath: string): SourceInfo {
@@ -145,8 +155,48 @@ function hashBuffer(content: Buffer): string {
   return crypto.createHash('sha256').update(content).digest('hex');
 }
 
+function selectorPath(selector: string): string[] {
+  if (!selector.startsWith('$')) return [selector];
+  const out: string[] = [];
+  let i = 1;
+  while (i < selector.length) {
+    if (selector[i] !== '[') return [selector];
+    const close = selector.indexOf(']', i);
+    if (close < 0) return [selector];
+    const parsed = JSON.parse(selector.slice(i + 1, close)) as unknown;
+    if (typeof parsed !== 'string') return [selector];
+    out.push(parsed);
+    i = close + 1;
+  }
+  return out;
+}
+
+function selectorPathsOverlap(first: string[], second: string[]): boolean {
+  const limit = Math.min(first.length, second.length);
+  for (let i = 0; i < limit; i += 1) {
+    if (first[i] !== second[i]) return false;
+  }
+  return true;
+}
+
+function assertNoConfigSelectorOverlap(configs: VendorConfigDef[]): void {
+  const seen: Array<{ selector: string; path: string[]; owner: string; target: Target }> = [];
+  for (const config of configs) {
+    for (const selector of config.selectors) {
+      const current = { selector, path: selectorPath(selector), owner: `${config.pack}:${config.sourceName}`, target: config.target };
+      for (const prior of seen) {
+        if (prior.target === current.target && selectorPathsOverlap(prior.path, current.path)) {
+          throw new Error(`vendor config selector overlap for ${current.target}: ${prior.selector} from ${prior.owner} conflicts with ${current.selector} from ${current.owner}`);
+        }
+      }
+      seen.push(current);
+    }
+  }
+}
+
 export async function buildRuntimeConfig(input: BuildRuntimeConfigInput): Promise<RuntimeConfig> {
   const warnings: ConfigWarning[] = [];
+  assertNoConfigSelectorOverlap(input.configs ?? []);
 
   const agents = await Promise.all(input.agents.map(async (agent): Promise<AgentConfig> => {
     let instructions = agent.instructions;
@@ -258,5 +308,13 @@ export async function buildRuntimeConfig(input: BuildRuntimeConfigInput): Promis
     }]
   }));
 
-  return { pack: 'project', agents, skills, mcps, rules, warnings };
+  const configs: VendorConfig[] = (input.configs ?? []).map((config) => ({
+    pack: config.pack,
+    target: config.target,
+    source: sourceInfo(config.pack, config.packRoot, config.sourcePath),
+    values: config.values,
+    selectors: config.selectors
+  }));
+
+  return { pack: 'project', agents, skills, mcps, rules, configs, warnings };
 }

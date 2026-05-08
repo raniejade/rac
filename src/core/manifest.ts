@@ -11,7 +11,7 @@ const manifestRecordSchema = z.object({
   version: z.literal(1),
   pack: z.string(),
   target: z.enum(['claude', 'codex', 'opencode']),
-  kind: z.enum(['agent', 'skill', 'mcp', 'rule']),
+  kind: z.enum(['agent', 'skill', 'mcp', 'rule', 'config']),
   id: z.string(),
   source: z.string(),
   relPath: z.string(),

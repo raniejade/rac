@@ -7,8 +7,8 @@ import fg from 'fast-glob';
 import { parse } from 'smol-toml';
 import { z } from 'zod';
 
-import type { AgentDef, McpDef, PackRuntime, PackSpec, RuleCommandItem, RuleDef, SkillDef } from './types.js';
-import { collectEnvVarsFromText, normalizeDefinitionId } from './util.js';
+import type { AgentDef, McpDef, PackRuntime, PackSpec, RuleCommandItem, RuleDef, SkillDef, Target, VendorConfigDef } from './types.js';
+import { collectEnvVarsFromText, jsonPathBracketSelector, normalizeDefinitionId } from './util.js';
 
 const PACK_ID_RE = /^[A-Za-z0-9._-]+$/;
 const GITHUB_REPO_RE = /^github:([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)$/;
@@ -23,6 +23,7 @@ const mcpSchema = z.object({ id: z.string().min(1), command: z.string().optional
   if (hasLocal && hasRemote) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'mcp cannot define both local and remote transport' });
 });
 const ruleSchema = z.object({ id: z.string().min(1), decision: z.string(), justification: z.string(), command: z.array(z.union([z.string(), z.array(z.string())])), append_wildcard: z.boolean().optional() });
+const VENDOR_CONFIG_TARGETS = ['claude', 'codex', 'opencode'] as const;
 
 function parseTomlOrThrow(file: string, raw: string): Record<string, unknown> {
   try { return parse(raw) as Record<string, unknown>; }
@@ -100,6 +101,186 @@ function mapId<T extends { id: string }>(items: T[], kind: string): void {
     if (seen.has(item.id)) throw new Error(`duplicate ${kind} id: ${item.id}`);
     seen.add(item.id);
   }
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || value instanceof Date) return undefined;
+  return value as Record<string, unknown>;
+}
+
+function isScalarJsonValue(value: unknown): boolean {
+  return typeof value === 'string' || typeof value === 'boolean' || (typeof value === 'number' && Number.isFinite(value));
+}
+
+function assertTomlConfigValue(value: unknown, context: string): void {
+  if (isScalarJsonValue(value)) return;
+  if (value instanceof Date) throw new Error(`${context} rejects datetimes`);
+  if (typeof value === 'number') throw new Error(`${context} rejects non-finite numbers`);
+  if (Array.isArray(value)) {
+    if (value.length === 0) return;
+    const firstType = typeof value[0];
+    if (!isScalarJsonValue(value[0])) throw new Error(`${context} rejects arrays containing objects or arrays`);
+    for (const entry of value) {
+      if (!isScalarJsonValue(entry)) throw new Error(`${context} rejects arrays containing objects or arrays`);
+      if (typeof entry !== firstType) throw new Error(`${context} rejects heterogeneous arrays`);
+    }
+    return;
+  }
+  const table = asRecord(value);
+  if (table) {
+    for (const [key, child] of Object.entries(table)) assertTomlConfigValue(child, `${context}.${key}`);
+    return;
+  }
+  throw new Error(`${context} rejects unsupported value type: ${typeof value}`);
+}
+
+function assertJsonCompatible(value: unknown, context: string, allowNull: boolean): void {
+  if (value === null) {
+    if (allowNull) return;
+    throw new Error(`${context} cannot be emitted as TOML null`);
+  }
+  if (typeof value === 'string' || typeof value === 'boolean') return;
+  if (typeof value === 'number') {
+    if (Number.isFinite(value)) return;
+    throw new Error(`${context} rejects non-finite numbers`);
+  }
+  if (value instanceof Date) throw new Error(`${context} rejects datetimes`);
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i += 1) assertJsonCompatible(value[i], `${context}[${i}]`, allowNull);
+    return;
+  }
+  const table = asRecord(value);
+  if (table) {
+    for (const [key, child] of Object.entries(table)) assertJsonCompatible(child, `${context}.${key}`, allowNull);
+    return;
+  }
+  throw new Error(`${context} rejects unsupported value type: ${typeof value}`);
+}
+
+function mergeConfigValue(target: Record<string, unknown>, pathSegments: string[], value: unknown): void {
+  let cursor = target;
+  for (const segment of pathSegments.slice(0, -1)) {
+    const next = cursor[segment];
+    if (!asRecord(next)) {
+      cursor[segment] = {};
+    }
+    cursor = cursor[segment] as Record<string, unknown>;
+  }
+  cursor[pathSegments[pathSegments.length - 1]] = value;
+}
+
+function flattenConfigLeaves(value: Record<string, unknown>, prefix: string[] = []): Array<{ path: string[]; value: unknown }> {
+  const leaves: Array<{ path: string[]; value: unknown }> = [];
+  for (const [key, child] of Object.entries(value)) {
+    const pathSegments = [...prefix, key];
+    const childTable = asRecord(child);
+    if (childTable) leaves.push(...flattenConfigLeaves(childTable, pathSegments));
+    else leaves.push({ path: pathSegments, value: child });
+  }
+  return leaves;
+}
+
+function assertNoSelectorOverlap(selectors: string[], context: string): void {
+  const parsed = selectors.map((selector) => ({ selector, path: selectorPath(selector) }));
+  for (let i = 0; i < parsed.length; i += 1) {
+    for (let j = i + 1; j < parsed.length; j += 1) {
+      if (pathsOverlap(parsed[i].path, parsed[j].path)) throw new Error(`${context} selector overlap: ${parsed[i].selector} conflicts with ${parsed[j].selector}`);
+    }
+  }
+}
+
+function selectorPath(selector: string): string[] {
+  if (!selector.startsWith('$')) return [selector];
+  const out: string[] = [];
+  let i = 1;
+  while (i < selector.length) {
+    if (selector[i] !== '[') return [selector];
+    const close = selector.indexOf(']', i);
+    if (close < 0) return [selector];
+    const parsed = JSON.parse(selector.slice(i + 1, close)) as unknown;
+    if (typeof parsed !== 'string') return [selector];
+    out.push(parsed);
+    i = close + 1;
+  }
+  return out;
+}
+
+function pathsOverlap(first: string[], second: string[]): boolean {
+  const limit = Math.min(first.length, second.length);
+  for (let i = 0; i < limit; i += 1) {
+    if (first[i] !== second[i]) return false;
+  }
+  return true;
+}
+
+function normalizeVendorTarget(rawTarget: string, configPath: string): Target {
+  if (!VENDOR_CONFIG_TARGETS.includes(rawTarget as Target)) throw new Error(`unsupported vendor config target in ${configPath}: ${rawTarget}`);
+  return rawTarget as Target;
+}
+
+export async function loadVendorConfigs(root: string, packId: string): Promise<VendorConfigDef[]> {
+  const configPath = path.join(root, 'config.toml');
+  const parsed = parseTomlOrThrow(configPath, await readFile(configPath, 'utf8'));
+  const vendor = parsed.vendor;
+  const vendorTable = asRecord(vendor);
+  if (vendor !== undefined && !vendorTable) throw new Error(`invalid [vendor] block in ${configPath}`);
+  if (!vendorTable) return [];
+
+  const out: VendorConfigDef[] = [];
+  for (const [rawTarget, rawTargetValue] of Object.entries(vendorTable)) {
+    const target = normalizeVendorTarget(rawTarget, configPath);
+    const targetTable = asRecord(rawTargetValue);
+    if (!targetTable) throw new Error(`invalid [vendor.${rawTarget}] block in ${configPath}`);
+    const values: Record<string, unknown> = {};
+    const selectors: string[] = [];
+
+    const config = targetTable.config;
+    if (config !== undefined) {
+      const configTable = asRecord(config);
+      if (!configTable) throw new Error(`invalid [vendor.${target}.config] block in ${configPath}`);
+      assertTomlConfigValue(configTable, `vendor.${target}.config`);
+      for (const leaf of flattenConfigLeaves(configTable)) {
+        mergeConfigValue(values, leaf.path, leaf.value);
+        selectors.push(jsonPathBracketSelector(leaf.path));
+      }
+    }
+
+    const raw = targetTable.raw;
+    if (raw !== undefined) {
+      const rawTable = asRecord(raw);
+      if (!rawTable) throw new Error(`invalid [vendor.${target}.raw] block in ${configPath}`);
+      for (const [key, value] of Object.entries(rawTable)) {
+        assertJsonCompatible(value, `vendor.${target}.raw.${key}`, target !== 'codex');
+        values[key] = value;
+        selectors.push(jsonPathBracketSelector([key]));
+      }
+    }
+
+    const rawJson = targetTable.raw_json;
+    if (rawJson !== undefined) {
+      const rawJsonTable = asRecord(rawJson);
+      if (!rawJsonTable) throw new Error(`invalid [vendor.${target}.raw_json] block in ${configPath}`);
+      for (const [key, jsonSource] of Object.entries(rawJsonTable)) {
+        if (typeof jsonSource !== 'string') throw new Error(`vendor.${target}.raw_json.${key} must be a TOML string`);
+        let value: unknown;
+        try {
+          value = JSON.parse(jsonSource) as unknown;
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : String(error);
+          throw new Error(`invalid JSON in vendor.${target}.raw_json.${key}: ${reason}`);
+        }
+        assertJsonCompatible(value, `vendor.${target}.raw_json.${key}`, target !== 'codex');
+        values[key] = value;
+        selectors.push(jsonPathBracketSelector([key]));
+      }
+    }
+
+    assertNoSelectorOverlap(selectors, `vendor.${target}`);
+    if (selectors.length > 0) {
+      out.push({ pack: packId, packRoot: root, target, values, selectors, sourcePath: configPath, sourceName: path.relative(root, configPath) });
+    }
+  }
+  return out;
 }
 
 export async function loadInstallSettings(projectRoot: string): Promise<{ merge: boolean }> {

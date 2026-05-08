@@ -1,5 +1,7 @@
 import path from 'node:path';
 
+import { stringify as stringifyToml } from 'smol-toml';
+
 import type { RuntimeConfig, SkillAssetConfig } from '../core/config-model.js';
 import { renderVendorTemplate } from '../core/template.js';
 import type { Kind, ManagedInventoryEntry, Pack, Scope, Target } from '../core/types.js';
@@ -10,7 +12,7 @@ import { textManagedPayload } from './shared.js';
 export type AdapterOutput = {
   pack: Pack;
   target: Target;
-  kind: 'agent' | 'skill' | 'mcp' | 'rule';
+  kind: 'agent' | 'skill' | 'mcp' | 'rule' | 'config';
   id: string;
   source: string;
   relPath: string;
@@ -52,6 +54,101 @@ function toTomlMultilineBasicString(value: string): string {
   return `"""\n${escaped}"""`;
 }
 
+function asObject(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  return value as Record<string, unknown>;
+}
+
+function mergeObjectsDisjoint(base: Record<string, unknown>, overlay: Record<string, unknown>): Record<string, unknown> {
+  const out = { ...base };
+  for (const [key, value] of Object.entries(overlay)) {
+    const existing = out[key];
+    const existingObj = asObject(existing);
+    const valueObj = asObject(value);
+    out[key] = existingObj && valueObj ? mergeObjectsDisjoint(existingObj, valueObj) : value;
+  }
+  return out;
+}
+
+function configValuesFor(config: RuntimeConfig, target: Target): Record<string, unknown> {
+  return config.configs
+    .filter((entry) => entry.target === target)
+    .reduce<Record<string, unknown>>((acc, entry) => mergeObjectsDisjoint(acc, entry.values), {});
+}
+
+function configsFor(config: RuntimeConfig, target: Target): typeof config.configs {
+  return config.configs.filter((entry) => entry.target === target);
+}
+
+function selectorToPath(selector: string): string[] {
+  if (selector.startsWith('$[')) {
+    const segments: string[] = [];
+    let i = 1;
+    while (i < selector.length) {
+      const close = selector.indexOf(']', i);
+      if (selector[i] !== '[' || close < 0) return [selector];
+      const segment = JSON.parse(selector.slice(i + 1, close)) as unknown;
+      if (typeof segment !== 'string') return [selector];
+      segments.push(segment);
+      i = close + 1;
+    }
+    return segments;
+  }
+  if (selector.startsWith('$.')) return selector.slice(2).split('.');
+  const parts: string[] = [];
+  let current = '';
+  let i = 0;
+  while (i < selector.length) {
+    if (selector[i] === '.') {
+      if (current) parts.push(current);
+      current = '';
+      i += 1;
+      continue;
+    }
+    if (selector[i] === '"') {
+      let end = i + 1;
+      while (end < selector.length) {
+        if (selector[end] === '"' && selector[end - 1] !== '\\') break;
+        end += 1;
+      }
+      if (end >= selector.length) return [selector];
+      const quoted = selector.slice(i, end + 1);
+      parts.push(JSON.parse(quoted) as string);
+      i = end + 1;
+      if (selector[i] === '.') i += 1;
+      current = '';
+      continue;
+    }
+    current += selector[i];
+    i += 1;
+  }
+  if (current) parts.push(current);
+  return parts.length > 0 ? parts : [selector];
+}
+
+function pathsOverlap(first: string[], second: string[]): boolean {
+  const limit = Math.min(first.length, second.length);
+  for (let i = 0; i < limit; i += 1) if (first[i] !== second[i]) return false;
+  return true;
+}
+
+function assertNoSelectorConflicts(configSelectors: string[], generatedSelectors: string[], context: string): void {
+  if (configSelectors.length === 0) return;
+  const configPaths = configSelectors.map((selector) => ({ selector, path: selectorToPath(selector) }));
+  const generatedPaths = generatedSelectors.map((selector) => ({ selector, path: selectorToPath(selector) }));
+  for (const configSelector of configPaths) {
+    for (const generatedSelector of generatedPaths) {
+      if (pathsOverlap(configSelector.path, generatedSelector.path)) {
+        throw new Error(`${context} selector conflict: ${configSelector.selector} overlaps generated ${generatedSelector.selector}`);
+      }
+    }
+  }
+}
+
+function selectorsForConfigs(config: RuntimeConfig, target: Target): string[] {
+  return configsFor(config, target).flatMap((entry) => entry.selectors);
+}
+
 export function vendorManifestRelPath(target: Target, kind: Kind, scope: Scope = 'project'): string {
   if (target === 'claude') return '.claude/.rac-install-manifest.json';
   if (target === 'opencode') return `${opencodeDirFor(scope)}/.rac-install-manifest.json`;
@@ -74,6 +171,8 @@ function claudeAdapter(): TargetAdapter {
     target: 'claude',
     plan(config, scope) {
       const outputs: AdapterOutput[] = [];
+      const claudeConfigValues = configValuesFor(config, 'claude');
+      const claudeConfigs = configsFor(config, 'claude');
 
       for (const agent of config.agents) {
         const frontmatter = mergeGeneratedWithVendor(
@@ -114,7 +213,7 @@ function claudeAdapter(): TargetAdapter {
         }
       }
 
-      if (config.rules.length > 0) {
+      if (config.rules.length > 0 || claudeConfigs.length > 0) {
         const relPath = '.claude/settings.json';
         const deny: string[] = [];
         const entriesByRuleId = new Map<string, string[]>();
@@ -135,7 +234,12 @@ function claudeAdapter(): TargetAdapter {
           }
           entriesByRuleId.set(rule.id, ruleEntries);
         }
-        const content = `${JSON.stringify({ permissions: { deny } }, null, 2)}\n`;
+        assertNoSelectorConflicts(selectorsForConfigs(config, 'claude'), ['$.permissions.deny'], 'claude config');
+        const generatedRuleConfig = config.rules.length > 0 ? { permissions: { deny } } : {};
+        const content = `${JSON.stringify(mergeObjectsDisjoint(claudeConfigValues, generatedRuleConfig), null, 2)}\n`;
+        for (const entry of claudeConfigs) {
+          outputs.push({ pack: entry.pack, target: 'claude', kind: 'config', id: 'config', source: entry.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('claude', 'config', scope), inventory: entry.selectors.map((selector) => ({ version: 1, format: 'json', selector })), content, hash: sha256(content), isJson: true });
+        }
         for (const rule of config.rules) {
           outputs.push({ pack: rule.pack, target: 'claude', kind: 'rule', id: rule.id, source: rule.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('claude', 'rule', scope), inventory: [{ version: 1, format: 'json', selector: '$.permissions.deny', entries: entriesByRuleId.get(rule.id) ?? [] }], content, hash: sha256(content), isJson: true });
         }
@@ -179,6 +283,8 @@ function codexAdapter(): TargetAdapter {
     target: 'codex',
     plan(config, scope) {
       const outputs: AdapterOutput[] = [];
+      const codexConfigValues = configValuesFor(config, 'codex');
+      const codexConfigs = configsFor(config, 'codex');
 
       for (const agent of config.agents) {
         const instructions = agent.instructionsIsTemplate ? renderVendorTemplate(agent.instructions, 'codex', `agent ${agent.id}`) : agent.instructions;
@@ -212,19 +318,25 @@ function codexAdapter(): TargetAdapter {
         }
       }
 
-      if (config.mcps.length > 0) {
-        const lines = [MANAGED_TOML_WARNING];
+      if (config.mcps.length > 0 || codexConfigs.length > 0) {
+        const mcpServers: Record<string, unknown> = {};
+        const mcpSelectors: string[] = [];
         for (const mcp of [...config.mcps].sort((a, b) => a.id.localeCompare(b.id))) {
-          lines.push(`[mcp_servers.${tomlQuotedKeySegment(mcp.id)}]`);
+          mcpSelectors.push(`mcp_servers.${tomlQuotedKeySegment(mcp.id)}`);
           const generated: Record<string, unknown> = mcp.transport.kind === 'local'
             ? { command: mcp.transport.command, args: mcp.transport.args }
             : { type: mcp.transport.type, url: mcp.transport.url };
           if (mcp.startupTimeoutMs) generated.startup_timeout_sec = Math.ceil(mcp.startupTimeoutMs / 1000);
           const merged = mergeGeneratedWithVendor(generated, mcp.vendorConfig?.codex, `mcp ${mcp.id} vendor.codex.config`);
-          for (const [key, value] of Object.entries(merged)) lines.push(`${key} = ${toTomlValue(value)}`);
-          lines.push('');
+          mcpServers[mcp.id] = merged;
         }
-        const content = `${lines.join('\n').trimEnd()}\n`;
+        assertNoSelectorConflicts(selectorsForConfigs(config, 'codex'), ['mcp_servers', ...mcpSelectors], 'codex config');
+        const generatedTable = mergeObjectsDisjoint(codexConfigValues, config.mcps.length > 0 ? { mcp_servers: mcpServers } : {});
+        const serialized = stringifyToml(generatedTable);
+        const content = `${MANAGED_TOML_WARNING}\n${serialized}${serialized.endsWith('\n') ? '' : '\n'}`;
+        for (const entry of codexConfigs) {
+          outputs.push({ pack: entry.pack, target: 'codex', kind: 'config', id: 'config', source: entry.source.relPath, relPath: '.codex/config.toml', manifestRelPath: vendorManifestRelPath('codex', 'config', scope), inventory: entry.selectors.map((selector) => ({ version: 1, format: 'toml', selector })), content, hash: sha256(content), isJson: false });
+        }
         for (const mcp of config.mcps) {
           const relPath = '.codex/config.toml';
           outputs.push({ pack: mcp.pack, target: 'codex', kind: 'mcp', id: mcp.id, source: mcp.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('codex', 'mcp', scope), inventory: [{ version: 1, format: 'toml', selector: `mcp_servers.${tomlQuotedKeySegment(mcp.id)}` }], content, hash: sha256(content), isJson: false });
@@ -268,6 +380,8 @@ function opencodeAdapter(): TargetAdapter {
     plan(config, scope) {
       const outputs: AdapterOutput[] = [];
       const ocDir = opencodeDirFor(scope);
+      const opencodeConfigValues = configValuesFor(config, 'opencode');
+      const opencodeConfigs = configsFor(config, 'opencode');
 
       for (const agent of config.agents) {
         const frontmatter = mergeGeneratedWithVendor(
@@ -292,7 +406,7 @@ function opencodeAdapter(): TargetAdapter {
         }
       }
 
-      const hasOpenCodeConfig = config.mcps.length > 0 || config.rules.length > 0;
+      const hasOpenCodeConfig = config.mcps.length > 0 || config.rules.length > 0 || opencodeConfigs.length > 0;
       if (hasOpenCodeConfig) {
         const mcp = Object.fromEntries([...config.mcps].sort((a, b) => a.id.localeCompare(b.id)).map((server) => [
           server.id,
@@ -325,8 +439,21 @@ function opencodeAdapter(): TargetAdapter {
             .sort((a, b) => a.localeCompare(b))
             .map((command) => [command, 'deny'])
         );
-        const content = `${MANAGED_JSONC_WARNING}\n${JSON.stringify({ ...(config.mcps.length > 0 ? { mcp } : {}), ...(config.rules.length > 0 ? { permission: { bash } } : {}) }, null, 2)}\n`;
+        const generatedSelectors = [
+          jsonPathBracketSelector(['mcp']),
+          ...config.mcps.map((server) => jsonPathBracketSelector(['mcp', server.id])),
+          '$.permission.bash'
+        ];
+        assertNoSelectorConflicts(selectorsForConfigs(config, 'opencode'), generatedSelectors, 'opencode config');
+        const generatedConfig = mergeObjectsDisjoint(
+          opencodeConfigValues,
+          { ...(config.mcps.length > 0 ? { mcp } : {}), ...(config.rules.length > 0 ? { permission: { bash } } : {}) }
+        );
+        const content = `${MANAGED_JSONC_WARNING}\n${JSON.stringify(generatedConfig, null, 2)}\n`;
         const sharedRelPath = `${ocDir}/opencode.jsonc`;
+        for (const entry of opencodeConfigs) {
+          outputs.push({ pack: entry.pack, target: 'opencode', kind: 'config', id: 'config', source: entry.source.relPath, relPath: sharedRelPath, manifestRelPath: vendorManifestRelPath('opencode', 'config', scope), inventory: entry.selectors.map((selector) => ({ version: 1, format: 'json', selector })), content, hash: sha256(content), isJson: true });
+        }
         for (const server of config.mcps) {
           outputs.push({ pack: server.pack, target: 'opencode', kind: 'mcp', id: server.id, source: server.source.relPath, relPath: sharedRelPath, manifestRelPath: vendorManifestRelPath('opencode', 'mcp', scope), inventory: [{ version: 1, format: 'json', selector: jsonPathBracketSelector(['mcp', server.id]) }], content, hash: sha256(content), isJson: true });
         }

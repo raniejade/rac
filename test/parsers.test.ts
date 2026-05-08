@@ -5,7 +5,7 @@ import { parse as parseToml } from 'smol-toml';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { addProjectPack, listProjectPacks, removeProjectPack } from '../src/core/pack-config.js';
-import { loadAgents, loadMcps, loadRules, loadSkills } from '../src/core/parsers.js';
+import { loadAgents, loadMcps, loadRules, loadSkills, loadVendorConfigs } from '../src/core/parsers.js';
 
 import { cleanupTmpDirs, makeTmp, runCli } from './helpers.js';
 
@@ -144,6 +144,54 @@ describe('parsers', () => {
     await writeFile(path.join(root, '.rac/mcps/a.toml'), 'id = "a"\ncommand = "node"\nargs = ["${X}", "${Y}"]\n', 'utf8');
     const parsed = await loadMcps(path.join(root, '.rac'), 'project');
     expect(parsed[0].envVars).toEqual(['X', 'Y']);
+  });
+
+  it('parses vendor-wide config/raw/raw_json from .rac/config.toml only', async () => {
+    const root = await makeTmp();
+    await mkdir(path.join(root, '.rac'), { recursive: true });
+    await writeFile(
+      path.join(root, '.rac/config.toml'),
+      '[install]\nmerge = true\n\n[vendor.codex.config]\nmodel = "gpt-5.5"\nmodel_reasoning_effort = "medium"\n[vendor.codex.config.features]\nmulti_agent = true\n[vendor.claude.raw]\nallowedMcpServers = [{ serverName = "github" }]\n[vendor.opencode.raw_json]\nplugin = """["opencode-plugin-foo", ["opencode-plugin-bar", { "enabled": true }]]"""\n',
+      'utf8'
+    );
+
+    const configs = await loadVendorConfigs(path.join(root, '.rac'), 'project');
+    expect(configs.map((entry) => entry.target).sort()).toEqual(['claude', 'codex', 'opencode']);
+    expect(configs.find((entry) => entry.target === 'codex')?.selectors).toEqual([
+      '$["model"]',
+      '$["model_reasoning_effort"]',
+      '$["features"]["multi_agent"]'
+    ]);
+    expect(configs.find((entry) => entry.target === 'claude')?.values).toEqual({
+      allowedMcpServers: [{ serverName: 'github' }]
+    });
+    expect(configs.find((entry) => entry.target === 'opencode')?.values).toEqual({
+      plugin: ['opencode-plugin-foo', ['opencode-plugin-bar', { enabled: true }]]
+    });
+  });
+
+  it('rejects invalid vendor-wide config targets, values, JSON, and selector overlap', async () => {
+    const root = await makeTmp();
+    await mkdir(path.join(root, '.rac'), { recursive: true });
+    const configPath = path.join(root, '.rac/config.toml');
+
+    await writeFile(configPath, '[vendor.cursor.config]\nmodel = "x"\n', 'utf8');
+    await expect(loadVendorConfigs(path.join(root, '.rac'), 'project')).rejects.toThrow('unsupported vendor config target');
+
+    await writeFile(configPath, '[vendor.codex.config]\nvalues = [1, "two"]\n', 'utf8');
+    await expect(loadVendorConfigs(path.join(root, '.rac'), 'project')).rejects.toThrow('heterogeneous arrays');
+
+    await writeFile(configPath, '[[vendor.codex.config.values]]\nname = "bad"\n', 'utf8');
+    await expect(loadVendorConfigs(path.join(root, '.rac'), 'project')).rejects.toThrow('arrays containing objects or arrays');
+
+    await writeFile(configPath, '[vendor.codex.raw_json]\nvalue = "{bad"\n', 'utf8');
+    await expect(loadVendorConfigs(path.join(root, '.rac'), 'project')).rejects.toThrow('invalid JSON');
+
+    await writeFile(configPath, '[vendor.codex.raw_json]\nvalue = "null"\n', 'utf8');
+    await expect(loadVendorConfigs(path.join(root, '.rac'), 'project')).rejects.toThrow('cannot be emitted as TOML null');
+
+    await writeFile(configPath, '[vendor.codex.config.features]\nmulti_agent = true\n[vendor.codex.raw]\nfeatures = { other = true }\n', 'utf8');
+    await expect(loadVendorConfigs(path.join(root, '.rac'), 'project')).rejects.toThrow('selector overlap');
   });
 
   it('rule parser enforces [[rule]] entries, unique ids, and command validation', async () => {

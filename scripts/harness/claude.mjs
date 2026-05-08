@@ -1,7 +1,7 @@
+/* global process */
 import { assert, spawnCapture } from './lib.mjs';
 
 export async function checkClaudeProject(sampleRepo) {
-  /* global process */
   const claudeMcpList = await spawnCapture('claude', ['mcp', 'list'], sampleRepo);
   assert(claudeMcpList.code === 0, `Claude MCP discovery (project-scope) failed with code ${claudeMcpList.code}\nstdout:\n${claudeMcpList.stdout}\nstderr:\n${claudeMcpList.stderr}`);
   assert(/project-rules/.test(`${claudeMcpList.stdout}\n${claudeMcpList.stderr}`), 'Claude MCP discovery (project-scope) output missing project-rules');
@@ -13,7 +13,6 @@ export async function checkClaudeProject(sampleRepo) {
 }
 
 export async function checkClaudeUser({ userHome, cwd }) {
-  /* global process */
   const env = { ...process.env, HOME: userHome };
   const mcpList = await spawnCapture('claude', ['mcp', 'list'], cwd, env);
   assert(mcpList.code === 0, `Claude MCP discovery (user-scope) failed with code ${mcpList.code}\nstdout:\n${mcpList.stdout}\nstderr:\n${mcpList.stderr}`);

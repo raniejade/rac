@@ -47,6 +47,37 @@ describe('user-scope install', () => {
     });
   });
 
+  it('writes user-scope config kind to home and xdg shared config files', async () => {
+    await withUserScope(async (home, xdg) => {
+      await seedSourceAt(home);
+      await writeFile(
+        path.join(home, '.rac/config.toml'),
+        '[vendor.codex.config]\nmodel = "gpt-5.5"\n[vendor.claude.config.ui]\ntheme = "dark"\n[vendor.opencode.config]\nplugin = ["opencode-plugin-foo"]\n',
+        'utf8'
+      );
+      await mkdir(path.join(home, '.codex'), { recursive: true });
+      await mkdir(path.join(home, '.claude'), { recursive: true });
+      await mkdir(path.join(xdg, 'opencode'), { recursive: true });
+      await writeFile(path.join(home, '.codex/config.toml'), 'approval_policy = "on-request"\n', 'utf8');
+      await writeFile(path.join(home, '.claude/settings.json'), JSON.stringify({ external: true }, null, 2) + '\n', 'utf8');
+      await writeFile(path.join(xdg, 'opencode/opencode.jsonc'), '{"external":true}\n', 'utf8');
+
+      await install({ cwd: process.cwd(), targets: ['claude', 'codex', 'opencode'], kinds: ['config'], scope: 'user' });
+
+      const codex = parseToml(await readFile(path.join(home, '.codex/config.toml'), 'utf8')) as { approval_policy?: string; model?: string };
+      expect(codex.approval_policy).toBe('on-request');
+      expect(codex.model).toBe('gpt-5.5');
+
+      const claude = JSON.parse(await readFile(path.join(home, '.claude/settings.json'), 'utf8')) as { external?: boolean; ui?: { theme?: string } };
+      expect(claude.external).toBe(true);
+      expect(claude.ui?.theme).toBe('dark');
+
+      const opencode = JSON.parse((await readFile(path.join(xdg, 'opencode/opencode.jsonc'), 'utf8')).replace(/^\/\/.*\n/, '')) as { external?: boolean; plugin?: string[] };
+      expect(opencode.external).toBe(true);
+      expect(opencode.plugin).toEqual(['opencode-plugin-foo']);
+    });
+  });
+
   it('codex config.toml surgical merge preserves user-owned keys', async () => {
     await withUserScope(async (home) => {
       await seedSourceAt(home);
