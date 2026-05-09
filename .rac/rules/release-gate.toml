@@ -1,0 +1,20 @@
+[[rule]]
+id = "forbid-npm-run-version"
+decision = "forbidden"
+justification = "Version bumps go through the changesets release workflow, not local runs."
+command = ["npm", "run", "version"]
+append_wildcard = true
+
+[[rule]]
+id = "forbid-npm-run-release"
+decision = "forbidden"
+justification = "Publishing goes through the changesets release workflow, not local runs."
+command = ["npm", "run", "release"]
+append_wildcard = true
+
+[[rule]]
+id = "forbid-npm-publish"
+decision = "forbidden"
+justification = "Publishing goes through the changesets release workflow, not local runs."
+command = ["npm", "publish"]
+append_wildcard = true

@@ -3,7 +3,10 @@
     "deny": [
       "Bash(gh pr create *)",
       "Bash(gh pr edit *)",
-      "Bash(git push *)"
+      "Bash(git push *)",
+      "Bash(npm publish *)",
+      "Bash(npm run release *)",
+      "Bash(npm run version *)"
     ]
   }
 }
