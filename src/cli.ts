@@ -3,7 +3,7 @@ import { Command, InvalidArgumentError } from 'commander';
 
 import pkg from '../package.json' with { type: 'json' };
 
-import { detectColorMode, renderDoctor, renderEmpty, renderInstall, renderList, renderSuccess } from './cli/output/index.js';
+import { detectColorMode, renderDoctor, renderEmpty, renderInstall, renderList, renderSuccess, startSpinner } from './cli/output/index.js';
 import { doctor, initProject, install } from './core/install.js';
 import { addProjectPack, listProjectPacks, removeProjectPack } from './core/pack-config.js';
 import type { Kind, Scope, Target } from './core/types.js';
@@ -74,24 +74,31 @@ program.command('install')
   .option('--no-merge', 'bypass surgical merge of shared config files; write generated content wholesale')
   .action(async (opts: { targets?: string; kind?: string; dryRun?: boolean; clean?: boolean; check?: boolean; force?: boolean; refreshPacks?: boolean; scope?: string; noMerge?: boolean }) => {
     const mode = detectColorMode({ plainFlag: !!(program.opts() as { plain?: boolean }).plain });
-    const result = await install({
-      targets: normalizeTargets(opts.targets),
-      kinds: normalizeKinds(opts.kind),
-      dryRun: !!opts.dryRun,
-      clean: !!opts.clean,
-      check: !!opts.check,
-      force: !!opts.force,
-      refreshPacks: !!opts.refreshPacks,
-      scope: normalizeScope(opts.scope),
-      noMerge: opts.noMerge ? true : undefined,
-      cwd: process.cwd()
-    });
-    process.stdout.write(renderInstall(result, {
-      cwd: process.cwd(),
-      mode,
-      check: !!opts.check,
-      dryRun: !!opts.dryRun
-    }));
+    const spinner = startSpinner('Installing…', mode);
+    try {
+      const result = await install({
+        targets: normalizeTargets(opts.targets),
+        kinds: normalizeKinds(opts.kind),
+        dryRun: !!opts.dryRun,
+        clean: !!opts.clean,
+        check: !!opts.check,
+        force: !!opts.force,
+        refreshPacks: !!opts.refreshPacks,
+        scope: normalizeScope(opts.scope),
+        noMerge: opts.noMerge ? true : undefined,
+        cwd: process.cwd()
+      });
+      spinner.stop();
+      process.stdout.write(renderInstall(result, {
+        cwd: process.cwd(),
+        mode,
+        check: !!opts.check,
+        dryRun: !!opts.dryRun
+      }));
+    } catch (err) {
+      spinner.stop();
+      throw err;
+    }
   });
 
 program.command('doctor')

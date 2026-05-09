@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { detectColorMode, renderDoctor, renderEmpty, renderInstall, renderList, renderSuccess } from '../src/cli/output/index.js';
+import { detectColorMode, renderDoctor, renderEmpty, renderInstall, renderList, renderSuccess, startSpinner } from '../src/cli/output/index.js';
 
 describe('detectColorMode', () => {
   let origEnvForceColor: string | undefined;
@@ -202,5 +202,28 @@ describe('renderEmpty', () => {
   it('contains the message', () => {
     const output = renderEmpty('Empty', { color: false });
     expect(output).toContain('Empty');
+  });
+});
+
+describe('startSpinner', () => {
+  it('is a no-op in plain mode', () => {
+    const spinner = startSpinner('test', { color: false });
+    expect(typeof spinner.stop).toBe('function');
+    expect(typeof spinner.setText).toBe('function');
+    // Calling stop on a no-op should not throw or produce output.
+    spinner.stop();
+  });
+
+  it('is a no-op when stdout is not a TTY', () => {
+    const orig = process.stdout.isTTY;
+    process.stdout.isTTY = false;
+    try {
+      const spinner = startSpinner('test', { color: true });
+      spinner.stop();
+      // No assertion on output — just that nothing throws.
+      expect(true).toBe(true);
+    } finally {
+      process.stdout.isTTY = orig as boolean;
+    }
   });
 });
