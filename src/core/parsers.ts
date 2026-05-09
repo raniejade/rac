@@ -7,6 +7,7 @@ import fg from 'fast-glob';
 import { parse } from 'smol-toml';
 import { z } from 'zod';
 
+import { parseSelector, pathsOverlap } from './selector.js';
 import type { AgentDef, McpDef, PackRuntime, PackSpec, RuleCommandItem, RuleDecision, RuleDef, SkillDef, Target, VendorConfigDef } from './types.js';
 import { collectEnvVarsFromText, jsonPathBracketSelector, normalizeDefinitionId } from './util.js';
 
@@ -189,36 +190,12 @@ function flattenConfigLeaves(value: Record<string, unknown>, prefix: string[] = 
 }
 
 function assertNoSelectorOverlap(selectors: string[], context: string): void {
-  const parsed = selectors.map((selector) => ({ selector, path: selectorPath(selector) }));
+  const parsed = selectors.map((selector) => ({ selector, path: parseSelector(selector) }));
   for (let i = 0; i < parsed.length; i += 1) {
     for (let j = i + 1; j < parsed.length; j += 1) {
       if (pathsOverlap(parsed[i].path, parsed[j].path)) throw new Error(`${context} selector overlap: ${parsed[i].selector} conflicts with ${parsed[j].selector}`);
     }
   }
-}
-
-function selectorPath(selector: string): string[] {
-  if (!selector.startsWith('$')) return [selector];
-  const out: string[] = [];
-  let i = 1;
-  while (i < selector.length) {
-    if (selector[i] !== '[') return [selector];
-    const close = selector.indexOf(']', i);
-    if (close < 0) return [selector];
-    const parsed = JSON.parse(selector.slice(i + 1, close)) as unknown;
-    if (typeof parsed !== 'string') return [selector];
-    out.push(parsed);
-    i = close + 1;
-  }
-  return out;
-}
-
-function pathsOverlap(first: string[], second: string[]): boolean {
-  const limit = Math.min(first.length, second.length);
-  for (let i = 0; i < limit; i += 1) {
-    if (first[i] !== second[i]) return false;
-  }
-  return true;
 }
 
 function normalizeVendorTarget(rawTarget: string, configPath: string): Target {

@@ -1,6 +1,7 @@
 import { parse as parseJsonc } from 'jsonc-parser';
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 
+import { tryParseSelector } from '../core/selector.js';
 import type { Kind, ManifestRecord, Target } from '../core/types.js';
 import { MANAGED_JSONC_WARNING, sha256 } from '../core/util.js';
 
@@ -20,27 +21,6 @@ export interface MergeStrategy {
   merge(ctx: MergeContext): MergeResult;
 }
 
-function parseSelectorPath(selector: string): string[] | undefined {
-  if (selector.startsWith('$.')) return selector.slice(2).split('.');
-  if (!selector.startsWith('$')) return undefined;
-  const segments: string[] = [];
-  let i = 1;
-  while (i < selector.length) {
-    if (selector[i] !== '[') return undefined;
-    const close = selector.indexOf(']', i);
-    if (close === -1) return undefined;
-    const inner = selector.slice(i + 1, close);
-    try {
-      const parsed = JSON.parse(inner);
-      if (typeof parsed !== 'string') return undefined;
-      segments.push(parsed);
-    } catch {
-      return undefined;
-    }
-    i = close + 1;
-  }
-  return segments;
-}
 
 function parseJsonObject(raw: string | undefined): Record<string, unknown> {
   if (!raw || raw.trim().length === 0) return {};
@@ -59,7 +39,7 @@ function relevantRecords(records: ManifestRecord[], target: Target, kind: Kind):
 }
 
 function selectorMcpId(selector: string, key: 'mcp' | 'mcpServers'): string | undefined {
-  const segs = parseSelectorPath(selector);
+  const segs = tryParseSelector(selector);
   if (!segs || segs.length !== 2 || segs[0] !== key) return undefined;
   return segs[1];
 }
@@ -85,7 +65,7 @@ function configSelectorPaths(records: ManifestRecord[], target: Target): string[
   const paths: string[][] = [];
   for (const record of relevantRecords(records, target, 'config')) {
     for (const entry of record.inventory) {
-      const path = parseSelectorPath(entry.selector);
+      const path = tryParseSelector(entry.selector);
       if (path) paths.push(path);
     }
   }

@@ -3,6 +3,7 @@ import path from 'node:path';
 import { stringify as stringifyToml } from 'smol-toml';
 
 import type { RuntimeConfig, SkillAssetConfig } from '../core/config-model.js';
+import { parseCodexTomlSelector, parseSelector, pathsOverlap } from '../core/selector.js';
 import { renderVendorTemplate } from '../core/template.js';
 import type { Kind, ManagedInventoryEntry, Pack, Scope, Target } from '../core/types.js';
 import { jsonPathBracketSelector, MANAGED_JSONC_WARNING, MANAGED_TOML_WARNING, sha256, tomlQuotedKeySegment } from '../core/util.js';
@@ -94,62 +95,16 @@ function expandedCommandEntry(command: string[], appendWildcard: boolean): strin
   return `${command.join(' ')}${appendWildcard ? ' *' : ''}`;
 }
 
-function selectorToPath(selector: string): string[] {
-  if (selector.startsWith('$[')) {
-    const segments: string[] = [];
-    let i = 1;
-    while (i < selector.length) {
-      const close = selector.indexOf(']', i);
-      if (selector[i] !== '[' || close < 0) return [selector];
-      const segment = JSON.parse(selector.slice(i + 1, close)) as unknown;
-      if (typeof segment !== 'string') return [selector];
-      segments.push(segment);
-      i = close + 1;
-    }
-    return segments;
-  }
-  if (selector.startsWith('$.')) return selector.slice(2).split('.');
-  const parts: string[] = [];
-  let current = '';
-  let i = 0;
-  while (i < selector.length) {
-    if (selector[i] === '.') {
-      if (current) parts.push(current);
-      current = '';
-      i += 1;
-      continue;
-    }
-    if (selector[i] === '"') {
-      let end = i + 1;
-      while (end < selector.length) {
-        if (selector[end] === '"' && selector[end - 1] !== '\\') break;
-        end += 1;
-      }
-      if (end >= selector.length) return [selector];
-      const quoted = selector.slice(i, end + 1);
-      parts.push(JSON.parse(quoted) as string);
-      i = end + 1;
-      if (selector[i] === '.') i += 1;
-      current = '';
-      continue;
-    }
-    current += selector[i];
-    i += 1;
-  }
-  if (current) parts.push(current);
-  return parts.length > 0 ? parts : [selector];
-}
-
-function pathsOverlap(first: string[], second: string[]): boolean {
-  const limit = Math.min(first.length, second.length);
-  for (let i = 0; i < limit; i += 1) if (first[i] !== second[i]) return false;
-  return true;
-}
-
 function assertNoSelectorConflicts(configSelectors: string[], generatedSelectors: string[], context: string): void {
   if (configSelectors.length === 0) return;
-  const configPaths = configSelectors.map((selector) => ({ selector, path: selectorToPath(selector) }));
-  const generatedPaths = generatedSelectors.map((selector) => ({ selector, path: selectorToPath(selector) }));
+  const configPaths = configSelectors.map((selector) => ({
+    selector,
+    path: selector.startsWith('$') ? parseSelector(selector) : parseCodexTomlSelector(selector)
+  }));
+  const generatedPaths = generatedSelectors.map((selector) => ({
+    selector,
+    path: selector.startsWith('$') ? parseSelector(selector) : parseCodexTomlSelector(selector)
+  }));
   for (const configSelector of configPaths) {
     for (const generatedSelector of generatedPaths) {
       if (pathsOverlap(configSelector.path, generatedSelector.path)) {
