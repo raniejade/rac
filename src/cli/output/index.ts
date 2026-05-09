@@ -12,3 +12,4 @@ export {
 } from './install.js';
 export { badge, pad, relPath, renderEmpty, renderList, renderSuccess, symbol } from './render.js';
 export { type Spinner, startSpinner } from './spinner.js';
+export { renderUninstall } from './uninstall.js';

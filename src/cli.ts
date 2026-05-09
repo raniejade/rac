@@ -1,12 +1,15 @@
 #!/usr/bin/env node
+import { createInterface } from 'node:readline/promises';
+
 import { Command, InvalidArgumentError } from 'commander';
 
 import pkg from '../package.json' with { type: 'json' };
 
-import { detectColorMode, renderDoctor, renderEmpty, renderInstall, renderList, renderSuccess, startSpinner } from './cli/output/index.js';
+import { detectColorMode, renderDoctor, renderEmpty, renderInstall, renderList, renderSuccess, renderUninstall, startSpinner } from './cli/output/index.js';
 import { doctor, initProject, install } from './core/install.js';
 import { addProjectPack, listProjectPacks, removeProjectPack } from './core/pack-config.js';
 import type { Kind, Scope, Target } from './core/types.js';
+import { uninstall } from './core/uninstall.js';
 import { splitCsv } from './core/util.js';
 
 const TARGET_VALUES = ['claude', 'codex', 'opencode'] as const;
@@ -99,6 +102,50 @@ program.command('install')
       spinner.stop();
       throw err;
     }
+  });
+
+program.command('uninstall')
+  .description('Remove all RAC-managed files and selectors for selected scope/targets/kinds')
+  .option('--targets <targets>', 'comma-separated: claude,codex,opencode')
+  .option('--kind <kinds>', 'comma-separated: agent,skill,mcp,rule,config')
+  .option('--dry-run', 'print planned changes only')
+  .option('--scope <scope>', 'project|user (default project)')
+  .option('--yes', 'skip confirmation prompt')
+  .action(async (opts: { targets?: string; kind?: string; dryRun?: boolean; scope?: string; yes?: boolean }) => {
+    const cwd = process.cwd();
+    const mode = detectColorMode({ plainFlag: !!(program.opts() as { plain?: boolean }).plain });
+    const targets = normalizeTargets(opts.targets);
+    const kinds = opts.kind !== undefined ? normalizeKinds(opts.kind) : undefined;
+    const scope = normalizeScope(opts.scope);
+
+    // Compute the plan (dry-run first to show what would change)
+    const plan = await uninstall({ cwd, targets, kinds, scope, dryRun: true });
+    process.stdout.write(renderUninstall(plan, { cwd, mode, dryRun: true }));
+
+    if (opts.dryRun) return;
+    if (plan.changes.length === 0) return;
+
+    if (!opts.yes) {
+      if (!process.stdin.isTTY) {
+        process.stderr.write('cannot confirm in non-interactive mode; pass --yes\n');
+        process.exitCode = 1;
+        return;
+      }
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      try {
+        const ans = (await rl.question('Proceed with uninstall? [y/N] ')).trim().toLowerCase();
+        if (ans !== 'y' && ans !== 'yes') {
+          process.stdout.write('Aborted.\n');
+          return;
+        }
+      } finally {
+        rl.close();
+      }
+    }
+
+    // Apply the uninstall
+    const result = await uninstall({ cwd, targets, kinds, scope, dryRun: false });
+    process.stdout.write(`Uninstalled ${result.changes.length} change(s).\n`);
   });
 
 program.command('doctor')
