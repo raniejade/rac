@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { stat } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -85,7 +86,7 @@ describe('rac uninstall CLI', () => {
 
     // runCli uses spawnSync, which is non-TTY. Without --yes, should fail.
     const uninstallResult = runCli(root, ['uninstall']);
-    expect(uninstallResult.status).not.toBe(0);
+    expect(uninstallResult.status).toBe(1);
     expect(uninstallResult.stderr).toContain('--yes');
   });
 
@@ -102,12 +103,14 @@ describe('rac uninstall CLI', () => {
     const output = dryRunResult.stdout;
 
     // Should have `-` glyphs for delete-file actions (agents are whole-file)
+    // claude: 1 agent + 1 manifest; codex: 1 agent + 2 rules (same file, 2 records) + 1 manifest = 6
     const deleteGlyphs = (output.match(/ {2}[a-z ]+ {2}- {2}/g) ?? []).length;
-    expect(deleteGlyphs).toBeGreaterThan(0);
+    expect(deleteGlyphs).toBe(6);
 
     // Should have `~` glyphs for prune-selector actions (mcp and rule are shared files)
+    // claude: 1 mcp + 2 rules (deny/deny entries); codex: 1 mcp = 4
     const pruneGlyphs = (output.match(/ {2}[a-z ]+ {2}~ {2}/g) ?? []).length;
-    expect(pruneGlyphs).toBeGreaterThan(0);
+    expect(pruneGlyphs).toBe(4);
 
     // Should contain (dry-run) in summary
     expect(output).toContain('(dry-run)');
@@ -129,5 +132,23 @@ describe('rac uninstall CLI', () => {
     const result = runCli(root, ['uninstall', '--yes']);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('Nothing to uninstall.');
+  });
+
+  it('uninstall with piped y: exits 0 and agent file is removed', async () => {
+    const root = await makeTmp();
+    await seed(root);
+
+    const installResult = runCli(root, ['install', '--targets', 'claude', '--kind', 'agent']);
+    expect(installResult.status).toBe(0);
+    await expect(exists(path.join(root, '.claude/agents/reviewer.md'))).resolves.toBe(true);
+
+    const uninstallResult = spawnSync(
+      'node',
+      [path.join(process.cwd(), 'dist/cli.js'), 'uninstall'],
+      { cwd: root, encoding: 'utf8', input: 'y\n' }
+    );
+
+    expect(uninstallResult.status).toBe(0);
+    await expect(exists(path.join(root, '.claude/agents/reviewer.md'))).resolves.toBe(false);
   });
 });

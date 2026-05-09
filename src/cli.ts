@@ -120,26 +120,52 @@ program.command('uninstall')
 
     // Compute the plan (dry-run first to show what would change)
     const plan = await uninstall({ cwd, targets, kinds, scope, dryRun: true });
-    process.stdout.write(renderUninstall(plan, { cwd, mode, dryRun: true }));
+    process.stdout.write(renderUninstall(plan, { cwd, mode, dryRun: !!opts.dryRun }));
 
     if (opts.dryRun) return;
     if (plan.changes.length === 0) return;
 
     if (!opts.yes) {
-      if (!process.stdin.isTTY) {
-        process.stderr.write('cannot confirm in non-interactive mode; pass --yes\n');
-        process.exitCode = 1;
-        return;
-      }
-      const rl = createInterface({ input: process.stdin, output: process.stdout });
-      try {
-        const ans = (await rl.question('Proceed with uninstall? [y/N] ')).trim().toLowerCase();
-        if (ans !== 'y' && ans !== 'yes') {
-          process.stdout.write('Aborted.\n');
+      let ans: string;
+      if (process.stdin.isTTY) {
+        const rl = createInterface({ input: process.stdin, output: process.stdout });
+        try {
+          ans = (await rl.question('Proceed with uninstall? [y/N] ')).trim().toLowerCase();
+        } finally {
+          rl.close();
+        }
+      } else {
+        // Non-TTY: attempt to read one line from stdin (supports piped 'y\n').
+        // Returns null if stdin is empty/closed immediately.
+        const line = await new Promise<string | null>((resolve) => {
+          let buf = '';
+          const onData = (chunk: Buffer | string) => {
+            buf += chunk.toString();
+            const nl = buf.indexOf('\n');
+            if (nl !== -1) {
+              process.stdin.off('data', onData);
+              process.stdin.off('close', onClose);
+              resolve(buf.slice(0, nl));
+            }
+          };
+          const onClose = () => {
+            process.stdin.off('data', onData);
+            resolve(buf.trim().length > 0 ? buf.trim() : null);
+          };
+          process.stdin.on('data', onData);
+          process.stdin.on('close', onClose);
+          process.stdin.resume();
+        });
+        if (line === null) {
+          process.stderr.write('cannot confirm in non-interactive mode; pass --yes\n');
+          process.exitCode = 1;
           return;
         }
-      } finally {
-        rl.close();
+        ans = line.trim().toLowerCase();
+      }
+      if (ans !== 'y' && ans !== 'yes') {
+        process.stdout.write('Aborted.\n');
+        return;
       }
     }
 
