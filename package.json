@@ -1,21 +1,32 @@
 {
   "name": "rac",
   "version": "0.2.0",
+  "description": "Install RAC project definitions into Claude/Codex/OpenCode config surfaces",
+  "license": "MIT",
   "type": "module",
   "bin": {
     "rac": "dist/cli.js"
   },
+  "files": ["dist", "README.md", "LICENSE"],
   "engines": {
     "node": ">=20"
   },
+  "repository": { "type": "git", "url": "git+https://github.com/raniejade/rac.git" },
+  "homepage": "https://github.com/raniejade/rac#readme",
+  "bugs": { "url": "https://github.com/raniejade/rac/issues" },
+  "publishConfig": { "access": "public", "provenance": true },
   "scripts": {
     "prepare": "npm run build",
+    "prepublishOnly": "npm run lint && npm run typecheck && npm test && npm run build",
     "build": "tsup src/cli.ts --format esm --dts --clean --out-dir dist",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:harness": "npm run build && node scripts/harness-smoke.mjs",
     "lint": "eslint .",
-    "lint:fix": "eslint . --fix"
+    "lint:fix": "eslint . --fix",
+    "changeset": "changeset",
+    "version": "changeset version",
+    "release": "changeset publish"
   },
   "dependencies": {
     "commander": "^12.1.0",
@@ -26,6 +37,8 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@changesets/changelog-github": "^0.7.0",
+    "@changesets/cli": "^2.31.0",
     "@eslint/js": "^9.26.0",
     "@types/node": "^22.15.3",
     "eslint": "^9.26.0",
