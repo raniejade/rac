@@ -136,11 +136,8 @@ export async function uninstall(options: UninstallOptions): Promise<UninstallRes
           }
         }
       } else {
-        // No strategy: fallback whole-file delete (shouldn't happen for known shared files)
-        for (const record of records) {
-          changes.push({ action: 'delete-file', target: record.target, kind: record.kind, pack: record.pack, id: record.id, relPath, absPath });
-        }
-        fileDeletes.add(absPath);
+        // No strategy: this is a programming error — refusing to silently delete a shared file
+        throw new Error(`uninstall: known shared file ${relPath} has no merge strategy; refusing to delete`);
       }
       continue;
     }
