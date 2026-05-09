@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { AgentDef, Kind, McpDef, Pack, RuleDecision, RuleDef, SkillDef, Target, VendorConfigDef } from './types.js';
-import { assertNoTraversal, rel } from './util.js';
+import { assertNoTraversal, bracketSelectorPath, expandRulePattern, rel, selectorPathsOverlap } from './util.js';
 
 export type WarningSeverity = 'error' | 'warn' | 'info';
 
@@ -162,35 +162,11 @@ function hashBuffer(content: Buffer): string {
   return crypto.createHash('sha256').update(content).digest('hex');
 }
 
-function selectorPath(selector: string): string[] {
-  if (!selector.startsWith('$')) return [selector];
-  const out: string[] = [];
-  let i = 1;
-  while (i < selector.length) {
-    if (selector[i] !== '[') return [selector];
-    const close = selector.indexOf(']', i);
-    if (close < 0) return [selector];
-    const parsed = JSON.parse(selector.slice(i + 1, close)) as unknown;
-    if (typeof parsed !== 'string') return [selector];
-    out.push(parsed);
-    i = close + 1;
-  }
-  return out;
-}
-
-function selectorPathsOverlap(first: string[], second: string[]): boolean {
-  const limit = Math.min(first.length, second.length);
-  for (let i = 0; i < limit; i += 1) {
-    if (first[i] !== second[i]) return false;
-  }
-  return true;
-}
-
 function assertNoConfigSelectorOverlap(configs: VendorConfigDef[]): void {
   const seen: Array<{ selector: string; path: string[]; owner: string; target: Target }> = [];
   for (const config of configs) {
     for (const selector of config.selectors) {
-      const current = { selector, path: selectorPath(selector), owner: `${config.pack}:${config.sourceName}`, target: config.target };
+      const current = { selector, path: bracketSelectorPath(selector), owner: `${config.pack}:${config.sourceName}`, target: config.target };
       for (const prior of seen) {
         if (prior.target === current.target && selectorPathsOverlap(prior.path, current.path)) {
           throw new Error(`vendor config selector overlap for ${current.target}: ${prior.selector} from ${prior.owner} conflicts with ${current.selector} from ${current.owner}`);
@@ -199,16 +175,6 @@ function assertNoConfigSelectorOverlap(configs: VendorConfigDef[]): void {
       seen.push(current);
     }
   }
-}
-
-function expandRulePattern(pattern: Array<string | string[]>): string[][] {
-  return pattern
-    .map((segment) => Array.isArray(segment) ? segment : [segment])
-    .reduce<string[][]>((acc, options) => {
-      const next: string[][] = [];
-      for (const base of acc) for (const option of options) next.push([...base, option]);
-      return next;
-    }, [[]]);
 }
 
 function validateNoRuleDecisionConflicts(rules: RuleDef[]): void {

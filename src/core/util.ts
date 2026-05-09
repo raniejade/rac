@@ -68,3 +68,88 @@ export function collectEnvVarsFromText(text: string): string[] {
   }
   return [...vars].sort();
 }
+
+export function expandRulePattern(pattern: Array<string | string[]>): string[][] {
+  return pattern
+    .map((segment) => Array.isArray(segment) ? segment : [segment])
+    .reduce<string[][]>((acc, options) => {
+      const next: string[][] = [];
+      for (const base of acc) for (const option of options) next.push([...base, option]);
+      return next;
+    }, [[]]);
+}
+
+export function bracketSelectorPath(selector: string): string[] {
+  if (!selector.startsWith('$')) return [selector];
+  const out: string[] = [];
+  let i = 1;
+  while (i < selector.length) {
+    if (selector[i] !== '[') return [selector];
+    const close = selector.indexOf(']', i);
+    if (close < 0) return [selector];
+    const parsed = JSON.parse(selector.slice(i + 1, close)) as unknown;
+    if (typeof parsed !== 'string') return [selector];
+    out.push(parsed);
+    i = close + 1;
+  }
+  return out;
+}
+
+export function selectorPath(selector: string): string[] {
+  if (selector.startsWith('$[')) {
+    const segments: string[] = [];
+    let i = 1;
+    while (i < selector.length) {
+      const close = selector.indexOf(']', i);
+      if (selector[i] !== '[' || close < 0) return [selector];
+      const segment = JSON.parse(selector.slice(i + 1, close)) as unknown;
+      if (typeof segment !== 'string') return [selector];
+      segments.push(segment);
+      i = close + 1;
+    }
+    return segments;
+  }
+  if (selector.startsWith('$.')) return selector.slice(2).split('.');
+  const parts: string[] = [];
+  let current = '';
+  let i = 0;
+  while (i < selector.length) {
+    if (selector[i] === '.') {
+      if (current) parts.push(current);
+      current = '';
+      i += 1;
+      continue;
+    }
+    if (selector[i] === '"') {
+      let end = i + 1;
+      while (end < selector.length) {
+        if (selector[end] === '"' && selector[end - 1] !== '\\') break;
+        end += 1;
+      }
+      if (end >= selector.length) return [selector];
+      const quoted = selector.slice(i, end + 1);
+      parts.push(JSON.parse(quoted) as string);
+      i = end + 1;
+      if (selector[i] === '.') i += 1;
+      current = '';
+      continue;
+    }
+    current += selector[i];
+    i += 1;
+  }
+  if (current) parts.push(current);
+  return parts.length > 0 ? parts : [selector];
+}
+
+export function selectorPathsOverlap(first: string[], second: string[]): boolean {
+  const limit = Math.min(first.length, second.length);
+  for (let i = 0; i < limit; i += 1) {
+    if (first[i] !== second[i]) return false;
+  }
+  return true;
+}
+
+export function asRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || value instanceof Date) return undefined;
+  return value as Record<string, unknown>;
+}
