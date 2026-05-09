@@ -570,7 +570,7 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
     if (failures.length > 0) {
       throw new Error(['install --check failed:', ...failures].join('\n'));
     }
-    return { changes, create: changes.filter(c => c.action === 'create').map(c => c.absPath), update: changes.filter(c => c.action === 'update').map(c => c.absPath), del: [] };
+    return { changes, create: changes.filter(c => c.action === 'create').map(c => c.absPath), update: changes.filter(c => c.action === 'update').map(c => c.absPath), del: changes.filter(c => c.action === 'delete').map(c => c.absPath) };
   }
 
   if (!options.dryRun) {
