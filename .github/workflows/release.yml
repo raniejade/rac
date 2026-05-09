@@ -47,6 +47,8 @@ jobs:
 
       - name: Apply changesets (bump version + write CHANGELOG)
         run: npx changeset version
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Read new version
         id: pkg

@@ -1,20 +1,32 @@
 {
-  "name": "rac",
-  "version": "0.2.0",
+  "name": "@raniejade/rac",
+  "version": "0.2.1",
   "description": "Install RAC project definitions into Claude/Codex/OpenCode config surfaces",
   "license": "MIT",
   "type": "module",
   "bin": {
     "rac": "dist/cli.js"
   },
-  "files": ["dist", "README.md", "LICENSE"],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "engines": {
     "node": ">=20"
   },
-  "repository": { "type": "git", "url": "git+https://github.com/raniejade/rac.git" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/raniejade/rac.git"
+  },
   "homepage": "https://github.com/raniejade/rac#readme",
-  "bugs": { "url": "https://github.com/raniejade/rac/issues" },
-  "publishConfig": { "access": "public", "provenance": true },
+  "bugs": {
+    "url": "https://github.com/raniejade/rac/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "scripts": {
     "prepare": "npm run build",
     "prepublishOnly": "npm run lint && npm run typecheck && npm test && npm run build",
