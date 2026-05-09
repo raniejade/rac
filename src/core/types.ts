@@ -111,7 +111,20 @@ export type InstallOptions = {
   noMerge?: boolean;
 };
 
+export type InstallAction = 'create' | 'update' | 'delete';
+
+export type InstallChange = {
+  action: InstallAction;
+  target: Target;
+  kind: Kind;
+  pack: Pack;
+  id: string;
+  relPath: string;
+  absPath: string;
+};
+
 export type InstallResult = {
+  changes: InstallChange[];
   create: string[];
   update: string[];
   del: string[];

@@ -8,7 +8,7 @@ import { adapterFor, vendorManifestRelPath } from '../adapters/target-adapters.j
 import { buildRuntimeConfig } from './config-model.js';
 import { deleteManifest, loadManifest, saveManifest } from './manifest.js';
 import { loadAgents, loadInstallSettings, loadMcps, loadRules, loadSkills, loadVendorConfigs, resolvePacks } from './parsers.js';
-import type { InstallManifest, InstallOptions, InstallResult, Kind, ManifestRecord, Scope, Target } from './types.js';
+import type { InstallChange, InstallManifest, InstallOptions, InstallResult, Kind, ManifestRecord, Scope, Target } from './types.js';
 import { MANAGED_JSONC_WARNING, MANAGED_MARKDOWN_WARNING, MANAGED_TOML_WARNING, resolveContainedPath, sha256 } from './util.js';
 
 type PlannedWrite = ManifestRecord & {
@@ -355,8 +355,7 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
     }
   }
 
-  const create: string[] = [];
-  const update: string[] = [];
+  const changes: InstallChange[] = [];
   const seenResultPath = new Set<string>();
   const checkedOverwritePath = new Set<string>();
   const appliedWriteByPath = new Set<string>();
@@ -374,9 +373,25 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
     const alreadyExists = await exists(write.absPath);
     if (!seenResultPath.has(write.absPath)) {
       if (!alreadyExists) {
-        create.push(write.absPath);
+        changes.push({
+          action: 'create',
+          target: write.target,
+          kind: write.kind,
+          pack: write.pack,
+          id: write.id,
+          relPath: write.relPath,
+          absPath: write.absPath
+        });
       } else if (!(await contentMatches(write.absPath, write.hash))) {
-        update.push(write.absPath);
+        changes.push({
+          action: 'update',
+          target: write.target,
+          kind: write.kind,
+          pack: write.pack,
+          id: write.id,
+          relPath: write.relPath,
+          absPath: write.absPath
+        });
       }
       seenResultPath.add(write.absPath);
     }
@@ -466,7 +481,6 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
     }
   }
 
-  const del: string[] = [];
   const seenDeletePath = new Set<string>();
   if (options.clean) {
     for (const { root, records: staleRecords } of staleByManifestAbsPath.values()) {
@@ -476,16 +490,17 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
         if (options.dryRun || options.check || seenDeletePath.has(absPath)) continue;
         if (await exists(absPath)) {
           await rm(absPath, { recursive: true, force: true });
-          del.push(absPath);
+          changes.push({ action: 'delete', target: staleRecord.target, kind: staleRecord.kind, pack: staleRecord.pack, id: staleRecord.id, relPath: staleRecord.relPath, absPath });
           seenDeletePath.add(absPath);
         }
       }
     }
   }
 
+  let legacyMigrationDelPath: string | undefined;
   if (!options.dryRun && !options.check && shouldMigrateLegacyOpenCodeJson && legacyOpenCodeSharedAbsPath) {
     await rm(legacyOpenCodeSharedAbsPath, { force: true });
-    del.push(legacyOpenCodeSharedAbsPath);
+    legacyMigrationDelPath = legacyOpenCodeSharedAbsPath;
   }
 
   const nextManifestsByAbsPath = new Map<string, { absPath: string; manifest: InstallManifest; manifestRelPath: string; root: string }>();
@@ -545,7 +560,7 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
     if (failures.length > 0) {
       throw new Error(['install --check failed:', ...failures].join('\n'));
     }
-    return { create, update, del: [] };
+    return { changes, create: changes.filter(c => c.action === 'create').map(c => c.absPath), update: changes.filter(c => c.action === 'update').map(c => c.absPath), del: [] };
   }
 
   if (!options.dryRun) {
@@ -562,7 +577,12 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
     }
   }
 
-  return { create, update, del };
+  return {
+    changes,
+    create: changes.filter(c => c.action === 'create').map(c => c.absPath),
+    update: changes.filter(c => c.action === 'update').map(c => c.absPath),
+    del: [...changes.filter(c => c.action === 'delete').map(c => c.absPath), ...(legacyMigrationDelPath ? [legacyMigrationDelPath] : [])]
+  };
 }
 
 export async function doctor(cwd: string, targets: Target[] | undefined, kinds: Kind[], scope: Scope = 'project'): Promise<string[]> {
