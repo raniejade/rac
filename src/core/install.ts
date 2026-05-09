@@ -497,10 +497,20 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
     }
   }
 
-  let legacyMigrationDelPath: string | undefined;
-  if (!options.dryRun && !options.check && shouldMigrateLegacyOpenCodeJson && legacyOpenCodeSharedAbsPath) {
-    await rm(legacyOpenCodeSharedAbsPath, { force: true });
-    legacyMigrationDelPath = legacyOpenCodeSharedAbsPath;
+  if (shouldMigrateLegacyOpenCodeJson && legacyOpenCodeSharedAbsPath) {
+    if (!options.dryRun && !options.check) {
+      await rm(legacyOpenCodeSharedAbsPath, { force: true });
+    }
+    const legacyRecord = legacyOpenCodeSharedRecords[0];
+    changes.push({
+      action: 'delete',
+      target: legacyRecord.target,
+      kind: legacyRecord.kind,
+      pack: legacyRecord.pack,
+      id: legacyRecord.id,
+      relPath: '.opencode/opencode.json',
+      absPath: legacyOpenCodeSharedAbsPath
+    });
   }
 
   const nextManifestsByAbsPath = new Map<string, { absPath: string; manifest: InstallManifest; manifestRelPath: string; root: string }>();
@@ -581,7 +591,7 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
     changes,
     create: changes.filter(c => c.action === 'create').map(c => c.absPath),
     update: changes.filter(c => c.action === 'update').map(c => c.absPath),
-    del: [...changes.filter(c => c.action === 'delete').map(c => c.absPath), ...(legacyMigrationDelPath ? [legacyMigrationDelPath] : [])]
+    del: changes.filter(c => c.action === 'delete').map(c => c.absPath)
   };
 }
 

@@ -5,4 +5,4 @@ export { buildRuntimeConfig } from './core/config-model.js';
 export { adapterFor, TARGET_ADAPTERS } from './adapters/target-adapters.js';
 export type { RuntimeConfig, AgentConfig, SkillConfig, McpConfig, RuleConfig, ToolRuleConfig, VendorConfig } from './core/config-model.js';
 export type { AdapterOutput, TargetAdapter } from './adapters/target-adapters.js';
-export type { AgentDef, InstallManifest, InstallOptions, InstallResult, Kind, ManifestRecord, McpDef, Pack, RuleDef, SkillDef, Target, VendorConfigDef } from './core/types.js';
+export type { AgentDef, InstallAction, InstallChange, InstallManifest, InstallOptions, InstallResult, Kind, ManifestRecord, McpDef, Pack, RuleDef, SkillDef, Target, VendorConfigDef } from './core/types.js';
