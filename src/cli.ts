@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { Command, InvalidArgumentError } from 'commander';
 
+import pkg from '../package.json' with { type: 'json' };
+
 import { doctor, initProject, install } from './core/install.js';
 import { addProjectPack, listProjectPacks, removeProjectPack } from './core/pack-config.js';
 import type { Kind, Scope, Target } from './core/types.js';
@@ -41,9 +43,11 @@ program
   .configureOutput({ outputError: (str, write) => write(str) })
   .exitOverride((error) => {
     if (error.code === 'commander.helpDisplayed') process.exit(0);
+    if (error.code === 'commander.version') process.exit(0);
     if (error.code?.startsWith('commander.')) process.exit(2);
     process.exit(1);
-  });
+  })
+  .version(pkg.version, '-v, --version', 'output the current version');
 
 program.command('init')
   .description('Initialize .rac source tree with starter reviewer + project-gates + project-rules + wrapper-deny rule definitions')
