@@ -10,11 +10,10 @@ import { jsonPathBracketSelector } from './util.js';
  *   to a simple split (matching existing JSONPath semantics for simple keys).
  * - Non-`$` selectors throw — use `parseCodexTomlSelector` for Codex TOML paths.
  *
- * The implementation deliberately does NOT use `JSONPath.toPathArray` because
- * that method has a known bug where it does not properly unescape JSON-encoded
- * strings in bracket notation (e.g. `$["dot id \"x\""]` returns the literal
- * backslashes rather than the unescaped string).  We use our own parser backed
- * by `JSON.parse` for correct RFC-conformant unescaping.
+ * A custom bracket parser is used instead of `jsonpath-plus` because
+ * `JSONPath.toPathArray` does not unescape JSON-encoded keys with embedded
+ * quotes correctly; this implementation delegates to `JSON.parse` for
+ * RFC-conformant unescaping.
  */
 export function parseSelector(selector: string): string[] {
   if (!selector.startsWith('$')) {
