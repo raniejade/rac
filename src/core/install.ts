@@ -74,14 +74,14 @@ async function contentMatches(filePath: string, expectedHash: string): Promise<b
   return sha256(await readFile(filePath)) === expectedHash;
 }
 
-const ALL_KINDS: Kind[] = ['agent', 'skill', 'mcp', 'rule', 'config'];
-const ALL_TARGETS: Target[] = ['claude', 'codex', 'opencode'];
+export const ALL_KINDS: Kind[] = ['agent', 'skill', 'mcp', 'rule', 'config'];
+export const ALL_TARGETS: Target[] = ['claude', 'codex', 'opencode'];
 
-function isManagedOpenCodeSharedJson(record: Pick<ManifestRecord, 'target' | 'kind' | 'relPath'>): boolean {
+export function isManagedOpenCodeSharedJson(record: Pick<ManifestRecord, 'target' | 'kind' | 'relPath'>): boolean {
   return record.target === 'opencode' && (record.kind === 'mcp' || record.kind === 'rule' || record.kind === 'config') && (record.relPath === '.opencode/opencode.jsonc' || record.relPath === '.opencode/opencode.json' || record.relPath === 'opencode/opencode.jsonc');
 }
 
-function resolveScopeRoots(options: InstallOptions): { sourceRoot: string; targetRootHome: string; scope: Scope } {
+export function resolveScopeRoots(options: InstallOptions): { sourceRoot: string; targetRootHome: string; scope: Scope } {
   const scope: Scope = options.scope ?? 'project';
   if (scope === 'user') {
     const home = process.env.RAC_HOME?.trim() || os.homedir();
@@ -90,11 +90,11 @@ function resolveScopeRoots(options: InstallOptions): { sourceRoot: string; targe
   return { sourceRoot: path.join(options.cwd, '.rac'), targetRootHome: options.cwd, scope };
 }
 
-function xdgConfigHome(): string {
+export function xdgConfigHome(): string {
   return process.env.XDG_CONFIG_HOME?.trim() || path.join(os.homedir(), '.config');
 }
 
-function targetRootFor(target: Target, scope: Scope, home: string): string {
+export function targetRootFor(target: Target, scope: Scope, home: string): string {
   if (scope === 'project') return home;
   if (target === 'opencode') return xdgConfigHome();
   return home;
