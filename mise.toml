@@ -1,0 +1,50 @@
+[tasks.gate]
+description = "Run the full pre-push gate: lint, typecheck, unit tests, build, and harness smoke."
+run = """
+set -euo pipefail
+npm run lint
+npm run typecheck
+npm test
+npm run build
+npm run test:harness
+"""
+
+[tasks.push-branch]
+description = "Push the current branch after running the full gate."
+depends = ["gate"]
+run = '''
+set -euo pipefail
+branch=$(git symbolic-ref --short HEAD)
+if [ "$branch" = "main" ] || [ "$branch" = "master" ]; then
+  echo "refusing to push to $branch"; exit 1
+fi
+git push origin "$branch"
+'''
+
+[tasks.create-pr]
+description = "Push branch and open a new GitHub PR after running the full gate. Pass --title/--body or extra gh flags via mise -- ..."
+depends = ["gate"]
+run = '''
+set -euo pipefail
+branch=$(git symbolic-ref --short HEAD)
+if [ "$branch" = "main" ] || [ "$branch" = "master" ]; then
+  echo "refusing to push to $branch"; exit 1
+fi
+git push origin "$branch"
+gh pr create "$@"
+'''
+
+[tasks.update-pr]
+description = "Push commits to the current branch's PR after running the full gate; pass --title/--body via -- ... to also update the PR body."
+depends = ["gate"]
+run = '''
+set -euo pipefail
+branch=$(git symbolic-ref --short HEAD)
+if [ "$branch" = "main" ] || [ "$branch" = "master" ]; then
+  echo "refusing to push to $branch"; exit 1
+fi
+git push origin "$branch"
+if [ "$#" -gt 0 ]; then
+  gh pr edit "$@"
+fi
+'''

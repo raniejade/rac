@@ -1,0 +1,11 @@
+# DO NOT EDIT; managed by rac
+prefix_rule(
+  pattern = ["gh", "pr", "create"],
+  decision = "forbidden",
+  justification = "Use the mise create-pr task; it runs the full gate before creating a PR.",
+)
+prefix_rule(
+  pattern = ["gh", "pr", "edit"],
+  decision = "forbidden",
+  justification = "Use the mise update-pr task; it runs the full gate before pushing or editing a PR.",
+)

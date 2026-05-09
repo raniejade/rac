@@ -1,0 +1,13 @@
+[[rule]]
+id = "deny-gh-pr-create"
+decision = "forbidden"
+justification = "Use the mise create-pr task; it runs the full gate before creating a PR."
+command = ["gh", "pr", "create"]
+append_wildcard = true
+
+[[rule]]
+id = "deny-gh-pr-edit"
+decision = "forbidden"
+justification = "Use the mise update-pr task; it runs the full gate before pushing or editing a PR."
+command = ["gh", "pr", "edit"]
+append_wildcard = true

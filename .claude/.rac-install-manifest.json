@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "records": [
+    {
+      "version": 1,
+      "pack": "project",
+      "target": "claude",
+      "kind": "rule",
+      "id": "deny-gh-pr-create",
+      "source": "rules/deny-gh-pr.toml",
+      "relPath": ".claude/settings.json",
+      "hash": "6ad640ad47c93e3b27acd24072b8e0642384a98c671b00703c9d533a513bf156",
+      "inventory": [
+        {
+          "version": 1,
+          "format": "json",
+          "selector": "$.permissions.deny",
+          "entries": [
+            "Bash(gh pr create *)"
+          ]
+        }
+      ]
+    },
+    {
+      "version": 1,
+      "pack": "project",
+      "target": "claude",
+      "kind": "rule",
+      "id": "deny-gh-pr-edit",
+      "source": "rules/deny-gh-pr.toml",
+      "relPath": ".claude/settings.json",
+      "hash": "6ad640ad47c93e3b27acd24072b8e0642384a98c671b00703c9d533a513bf156",
+      "inventory": [
+        {
+          "version": 1,
+          "format": "json",
+          "selector": "$.permissions.deny",
+          "entries": [
+            "Bash(gh pr edit *)"
+          ]
+        }
+      ]
+    },
+    {
+      "version": 1,
+      "pack": "project",
+      "target": "claude",
+      "kind": "rule",
+      "id": "deny-git-push",
+      "source": "rules/deny-git-push.toml",
+      "relPath": ".claude/settings.json",
+      "hash": "6ad640ad47c93e3b27acd24072b8e0642384a98c671b00703c9d533a513bf156",
+      "inventory": [
+        {
+          "version": 1,
+          "format": "json",
+          "selector": "$.permissions.deny",
+          "entries": [
+            "Bash(git push *)"
+          ]
+        }
+      ]
+    }
+  ]
+}

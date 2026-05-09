@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "records": [
+    {
+      "version": 1,
+      "pack": "project",
+      "target": "codex",
+      "kind": "rule",
+      "id": "deny-gh-pr-create",
+      "source": "rules/deny-gh-pr.toml",
+      "relPath": ".codex/rules/deny-gh-pr.rules",
+      "hash": "73c2297389adb43118411fc779b39733965760b481175130a9b8e51aae1206d1",
+      "inventory": [
+        {
+          "version": 1,
+          "format": "file",
+          "selector": "$"
+        }
+      ]
+    },
+    {
+      "version": 1,
+      "pack": "project",
+      "target": "codex",
+      "kind": "rule",
+      "id": "deny-gh-pr-edit",
+      "source": "rules/deny-gh-pr.toml",
+      "relPath": ".codex/rules/deny-gh-pr.rules",
+      "hash": "73c2297389adb43118411fc779b39733965760b481175130a9b8e51aae1206d1",
+      "inventory": [
+        {
+          "version": 1,
+          "format": "file",
+          "selector": "$"
+        }
+      ]
+    },
+    {
+      "version": 1,
+      "pack": "project",
+      "target": "codex",
+      "kind": "rule",
+      "id": "deny-git-push",
+      "source": "rules/deny-git-push.toml",
+      "relPath": ".codex/rules/deny-git-push.rules",
+      "hash": "10826dd594a78bf7fcdf6d3ce23ab9df32db9bc2d48f5dfb53880c6acae7758e",
+      "inventory": [
+        {
+          "version": 1,
+          "format": "file",
+          "selector": "$"
+        }
+      ]
+    }
+  ]
+}

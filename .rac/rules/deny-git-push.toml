@@ -1,0 +1,6 @@
+[[rule]]
+id = "deny-git-push"
+decision = "forbidden"
+justification = "Use the mise push-branch task; it runs the full gate (lint, typecheck, test, build, harness) before pushing."
+command = ["git", "push"]
+append_wildcard = true
