@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "records": [
+    {
+      "version": 1,
+      "pack": "project",
+      "target": "claude",
+      "kind": "rule",
+      "id": "forbid-npm-publish",
+      "source": "rules/release-gate.toml",
+      "relPath": ".claude/settings.json",
+      "hash": "28c87a73c06039a6297b1c7616192b53b9e814816cf1bee0ce54d168ad70b35d",
+      "inventory": [
+        {
+          "version": 1,
+          "format": "json",
+          "selector": "$.permissions.deny",
+          "entries": [
+            "Bash(npm publish *)"
+          ]
+        }
+      ]
+    },
+    {
+      "version": 1,
+      "pack": "project",
+      "target": "claude",
+      "kind": "rule",
+      "id": "forbid-npm-run-release",
+      "source": "rules/release-gate.toml",
+      "relPath": ".claude/settings.json",
+      "hash": "28c87a73c06039a6297b1c7616192b53b9e814816cf1bee0ce54d168ad70b35d",
+      "inventory": [
+        {
+          "version": 1,
+          "format": "json",
+          "selector": "$.permissions.deny",
+          "entries": [
+            "Bash(npm run release *)"
+          ]
+        }
+      ]
+    },
+    {
+      "version": 1,
+      "pack": "project",
+      "target": "claude",
+      "kind": "rule",
+      "id": "forbid-npm-run-version",
+      "source": "rules/release-gate.toml",
+      "relPath": ".claude/settings.json",
+      "hash": "28c87a73c06039a6297b1c7616192b53b9e814816cf1bee0ce54d168ad70b35d",
+      "inventory": [
+        {
+          "version": 1,
+          "format": "json",
+          "selector": "$.permissions.deny",
+          "entries": [
+            "Bash(npm run version *)"
+          ]
+        }
+      ]
+    }
+  ]
+}

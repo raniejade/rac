@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "records": [
+    {
+      "version": 1,
+      "pack": "project",
+      "target": "codex",
+      "kind": "rule",
+      "id": "forbid-npm-publish",
+      "source": "rules/release-gate.toml",
+      "relPath": ".codex/rules/release-gate.rules",
+      "hash": "df0da596aa25e5367a62cf74c0371dff7aa804e6b4f4c665ebb011a7a58fa3dc",
+      "inventory": [
+        {
+          "version": 1,
+          "format": "file",
+          "selector": "$"
+        }
+      ]
+    },
+    {
+      "version": 1,
+      "pack": "project",
+      "target": "codex",
+      "kind": "rule",
+      "id": "forbid-npm-run-release",
+      "source": "rules/release-gate.toml",
+      "relPath": ".codex/rules/release-gate.rules",
+      "hash": "df0da596aa25e5367a62cf74c0371dff7aa804e6b4f4c665ebb011a7a58fa3dc",
+      "inventory": [
+        {
+          "version": 1,
+          "format": "file",
+          "selector": "$"
+        }
+      ]
+    },
+    {
+      "version": 1,
+      "pack": "project",
+      "target": "codex",
+      "kind": "rule",
+      "id": "forbid-npm-run-version",
+      "source": "rules/release-gate.toml",
+      "relPath": ".codex/rules/release-gate.rules",
+      "hash": "df0da596aa25e5367a62cf74c0371dff7aa804e6b4f4c665ebb011a7a58fa3dc",
+      "inventory": [
+        {
+          "version": 1,
+          "format": "file",
+          "selector": "$"
+        }
+      ]
+    }
+  ]
+}

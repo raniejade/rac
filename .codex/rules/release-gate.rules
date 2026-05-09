@@ -1,0 +1,16 @@
+# DO NOT EDIT; managed by rac
+prefix_rule(
+  pattern = ["npm", "publish"],
+  decision = "forbidden",
+  justification = "Publishing goes through the changesets release workflow, not local runs.",
+)
+prefix_rule(
+  pattern = ["npm", "run", "release"],
+  decision = "forbidden",
+  justification = "Publishing goes through the changesets release workflow, not local runs.",
+)
+prefix_rule(
+  pattern = ["npm", "run", "version"],
+  decision = "forbidden",
+  justification = "Version bumps go through the changesets release workflow, not local runs.",
+)

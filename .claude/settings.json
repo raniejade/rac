@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(npm publish *)",
+      "Bash(npm run release *)",
+      "Bash(npm run version *)"
+    ]
+  }
+}
