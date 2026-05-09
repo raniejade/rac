@@ -107,6 +107,10 @@ id = "local-debug"
 command = "node"
 args = ["./tools/mcp.js"]
 startup_timeout_ms = 15000
+env_forward = ["API_TOKEN"]
+
+[env]
+LOG_LEVEL = "info"
 
 [vendor.codex.config]
 env = ["DEBUG=1"]
@@ -130,6 +134,15 @@ type = "streamable-http"
 - Remote transport uses `url`.
 - Set one transport mode only.
 - `startup_timeout_ms` is supported in source and is emitted for Codex as `startup_timeout_sec`.
+- `env` — optional `Record<string, string>`. Literal key-value pairs passed to the spawned MCP process. Local transport only.
+- `env_forward` — optional `string[]`. Host environment variable names to forward at MCP launch using each target's native runtime expansion syntax. Local transport only.
+- The same key cannot appear in both `env` and `env_forward`.
+- Both `env` and `env_forward` are rejected when `url` is set (remote transport).
+- No install-time substitution is performed. Each target's native runtime expansion is used so secrets are never written to committed config files.
+- Per-target rendering of `env = { LOG_LEVEL = "info" }` and `env_forward = ["TOKEN"]`:
+  - **claude** (`.mcp.json` / `.claude.json`): merged `env` map — literals plus `${K}` strings for forwards: `"env": { "LOG_LEVEL": "info", "TOKEN": "${TOKEN}" }`
+  - **codex** (`.codex/config.toml`): `env` map for literals and `env_vars` array for forwards: `env = { LOG_LEVEL = "info" }` and `env_vars = ["TOKEN"]`
+  - **opencode** (`opencode.jsonc`): merged `environment` map — literals plus `{env:K}` strings for forwards: `"environment": { "LOG_LEVEL": "info", "TOKEN": "{env:TOKEN}" }`
 - Use `vendor.<target>.config` for target-specific MCP fields, including transport `type` values required by a vendor.
 - Avoid nested object values in `vendor.codex.config`; Codex TOML output supports scalar and array pass-through values.
 

@@ -62,6 +62,8 @@ export type McpConfig = {
   source: SourceInfo;
   envRefs: string[];
   startupTimeoutMs?: number;
+  env?: Record<string, string>;
+  envForward?: string[];
   vendorConfig?: {
     claude?: Record<string, unknown>;
     codex?: Record<string, unknown>;
@@ -313,6 +315,8 @@ export async function buildRuntimeConfig(input: BuildRuntimeConfigInput): Promis
     source: sourceInfo(mcp.pack, mcp.packRoot, mcp.sourcePath),
     envRefs: mcp.envVars,
     startupTimeoutMs: mcp.startup_timeout_ms,
+    env: mcp.env,
+    envForward: mcp.env_forward,
     vendorConfig: {
       claude: targetVendorMap(mcp.vendor, 'claude', 'config'),
       codex: targetVendorMap(mcp.vendor, 'codex', 'config'),

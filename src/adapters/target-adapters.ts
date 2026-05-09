@@ -214,13 +214,17 @@ function claudeAdapter(): TargetAdapter {
 
       if (config.mcps.length > 0) {
         const relPath = scope === 'user' ? '.claude.json' : '.mcp.json';
-        const mcpServers = Object.fromEntries([...config.mcps].sort((a, b) => a.id.localeCompare(b.id)).map((mcp) => [
-          mcp.id,
-          mergeGeneratedWithVendor(mcp.transport.kind === 'local'
-            ? { command: mcp.transport.command, args: mcp.transport.args }
-            : { url: mcp.transport.url }, mcp.vendorConfig?.claude, `mcp ${mcp.id} vendor.claude.config`
-          )
-        ]));
+        const mcpServers = Object.fromEntries([...config.mcps].sort((a, b) => a.id.localeCompare(b.id)).map((mcp) => {
+          let generated: Record<string, unknown>;
+          if (mcp.transport.kind === 'local') {
+            const claudeEnv: Record<string, string> = { ...(mcp.env ?? {}) };
+            for (const k of mcp.envForward ?? []) claudeEnv[k] = `\${${k}}`;
+            generated = { command: mcp.transport.command, args: mcp.transport.args, ...(Object.keys(claudeEnv).length > 0 ? { env: claudeEnv } : {}) };
+          } else {
+            generated = { url: mcp.transport.url };
+          }
+          return [mcp.id, mergeGeneratedWithVendor(generated, mcp.vendorConfig?.claude, `mcp ${mcp.id} vendor.claude.config`)];
+        }));
         const content = `${JSON.stringify({ mcpServers }, null, 2)}\n`;
         for (const mcp of config.mcps) {
           outputs.push({ pack: mcp.pack, target: 'claude', kind: 'mcp', id: mcp.id, source: mcp.source.relPath, relPath, manifestRelPath: vendorManifestRelPath('claude', 'mcp', scope), inventory: [{ version: 1, format: 'json', selector: jsonPathBracketSelector(['mcpServers', mcp.id]) }], content, hash: sha256(content), isJson: true });
@@ -331,6 +335,10 @@ function codexAdapter(): TargetAdapter {
             ? { command: mcp.transport.command, args: mcp.transport.args }
             : { url: mcp.transport.url };
           if (mcp.startupTimeoutMs) generated.startup_timeout_sec = Math.ceil(mcp.startupTimeoutMs / 1000);
+          if (mcp.transport.kind === 'local') {
+            if (mcp.env && Object.keys(mcp.env).length > 0) generated.env = mcp.env;
+            if (mcp.envForward && mcp.envForward.length > 0) generated.env_vars = mcp.envForward;
+          }
           const merged = mergeGeneratedWithVendor(generated, mcp.vendorConfig?.codex, `mcp ${mcp.id} vendor.codex.config`);
           mcpServers[mcp.id] = merged;
         }
@@ -412,13 +420,17 @@ function opencodeAdapter(): TargetAdapter {
 
       const hasOpenCodeConfig = config.mcps.length > 0 || config.rules.length > 0 || opencodeConfigs.length > 0;
       if (hasOpenCodeConfig) {
-        const mcp = Object.fromEntries([...config.mcps].sort((a, b) => a.id.localeCompare(b.id)).map((server) => [
-          server.id,
-          mergeGeneratedWithVendor(server.transport.kind === 'local'
-            ? { type: 'local', enabled: true, command: [server.transport.command, ...server.transport.args] }
-            : { type: 'remote', enabled: true, url: server.transport.url }, server.vendorConfig?.opencode, `mcp ${server.id} vendor.opencode.config`
-          )
-        ]));
+        const mcp = Object.fromEntries([...config.mcps].sort((a, b) => a.id.localeCompare(b.id)).map((server) => {
+          let generated: Record<string, unknown>;
+          if (server.transport.kind === 'local') {
+            const ocEnv: Record<string, string> = { ...(server.env ?? {}) };
+            for (const k of server.envForward ?? []) ocEnv[k] = `{env:${k}}`;
+            generated = { type: 'local', enabled: true, command: [server.transport.command, ...server.transport.args], ...(Object.keys(ocEnv).length > 0 ? { environment: ocEnv } : {}) };
+          } else {
+            generated = { type: 'remote', enabled: true, url: server.transport.url };
+          }
+          return [server.id, mergeGeneratedWithVendor(generated, server.vendorConfig?.opencode, `mcp ${server.id} vendor.opencode.config`)];
+        }));
         const bashCommands = new Map<string, 'allow' | 'deny'>();
         const entriesByRuleId = new Map<string, string[]>();
         for (const rule of [...config.rules].sort((a, b) => a.id.localeCompare(b.id))) {

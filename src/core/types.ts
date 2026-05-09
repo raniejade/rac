@@ -40,6 +40,8 @@ export type McpDef = {
   url?: string;
   startup_timeout_ms?: number;
   vendor?: Record<string, unknown>;
+  env?: Record<string, string>;
+  env_forward?: string[];
   envVars: string[];
   sourcePath: string;
   sourceName: string;

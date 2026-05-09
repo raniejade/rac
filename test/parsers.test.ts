@@ -149,6 +149,34 @@ describe('parsers', () => {
     expect(parsed[0].envVars).toEqual(['X', 'Y']);
   });
 
+  it('mcp parser supports env and env_forward on local transport', async () => {
+    const root = await makeTmp();
+    await mkdir(path.join(root, '.rac/mcps'), { recursive: true });
+
+    // Local MCP with [env] block parses into McpDef.env
+    await writeFile(path.join(root, '.rac/mcps/a.toml'), 'id = "a"\ncommand = "node"\nargs = []\n\n[env]\nLOG_LEVEL = "info"\n', 'utf8');
+    const withEnv = await loadMcps(path.join(root, '.rac'), 'project');
+    expect(withEnv[0].env).toEqual({ LOG_LEVEL: 'info' });
+
+    // Local MCP with env_forward parses and adds to envVars
+    await writeFile(path.join(root, '.rac/mcps/a.toml'), 'id = "a"\ncommand = "node"\nargs = []\nenv_forward = ["X"]\n', 'utf8');
+    const withForward = await loadMcps(path.join(root, '.rac'), 'project');
+    expect(withForward[0].env_forward).toEqual(['X']);
+    expect(withForward[0].envVars).toContain('X');
+
+    // Same key in both env and env_forward rejects
+    await writeFile(path.join(root, '.rac/mcps/a.toml'), 'id = "a"\ncommand = "node"\nargs = []\nenv_forward = ["K"]\n\n[env]\nK = "v"\n', 'utf8');
+    await expect(loadMcps(path.join(root, '.rac'), 'project')).rejects.toThrow(/cannot also appear in env_forward/);
+
+    // Remote MCP with env rejects
+    await writeFile(path.join(root, '.rac/mcps/a.toml'), 'id = "a"\nurl = "https://x"\n\n[env]\nLOG_LEVEL = "info"\n', 'utf8');
+    await expect(loadMcps(path.join(root, '.rac'), 'project')).rejects.toThrow('mcp env is only allowed on local transport');
+
+    // Remote MCP with env_forward rejects
+    await writeFile(path.join(root, '.rac/mcps/a.toml'), 'id = "a"\nurl = "https://x"\nenv_forward = ["X"]\n', 'utf8');
+    await expect(loadMcps(path.join(root, '.rac'), 'project')).rejects.toThrow('mcp env_forward is only allowed on local transport');
+  });
+
   it('parses vendor-wide config/raw/raw_json from .rac/config.toml only', async () => {
     const root = await makeTmp();
     await mkdir(path.join(root, '.rac'), { recursive: true });

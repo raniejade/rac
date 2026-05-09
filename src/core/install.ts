@@ -167,7 +167,11 @@ export async function initProject(cwd: string, empty = false, scope: Scope = 'pr
     [
       'id = "project-rules"',
       'command = "node"',
-      'args = ["./tools/project-rules-mcp.js", "${PROJECT_RULES_TOKEN}"]',
+      'args = ["./tools/project-rules-mcp.js"]',
+      'env_forward = ["PROJECT_RULES_TOKEN"]',
+      '',
+      '[env]',
+      'LOG_LEVEL = "info"',
       ''
     ].join('\n'),
     'utf8'

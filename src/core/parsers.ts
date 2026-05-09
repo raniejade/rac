@@ -16,11 +16,18 @@ const REF_RE = /^\S+$/;
 
 const agentSchema = z.object({ id: z.string().min(1), name: z.string().optional(), description: z.string().optional(), instructions: z.string().min(1), tools: z.array(z.string()).optional(), vendor: z.record(z.unknown()).optional() });
 const skillSchema = z.object({ name: z.string().optional(), description: z.string().min(1), assets: z.array(z.string()).optional(), vendor: z.record(z.unknown()).optional() });
-const mcpSchema = z.object({ id: z.string().min(1), command: z.string().optional(), args: z.array(z.string()).optional(), url: z.string().optional(), startup_timeout_ms: z.number().int().positive().optional(), vendor: z.record(z.unknown()).optional() }).superRefine((v, ctx) => {
+const mcpSchema = z.object({ id: z.string().min(1), command: z.string().optional(), args: z.array(z.string()).optional(), url: z.string().optional(), startup_timeout_ms: z.number().int().positive().optional(), vendor: z.record(z.unknown()).optional(), env: z.record(z.string(), z.string()).optional(), env_forward: z.array(z.string().min(1)).optional() }).superRefine((v, ctx) => {
   const hasLocal = !!v.command;
   const hasRemote = !!v.url;
   if (!hasLocal && !hasRemote) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'mcp requires local command OR remote url' });
   if (hasLocal && hasRemote) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'mcp cannot define both local and remote transport' });
+  if (v.env && hasRemote) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'mcp env is only allowed on local transport' });
+  if (v.env_forward && v.env_forward.length > 0 && hasRemote) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'mcp env_forward is only allowed on local transport' });
+  if (v.env && v.env_forward) {
+    for (const k of v.env_forward) {
+      if (k in v.env) ctx.addIssue({ code: z.ZodIssueCode.custom, message: `mcp env key "${k}" cannot also appear in env_forward` });
+    }
+  }
 });
 const ruleSchema = z.object({ id: z.string().min(1), decision: z.string(), justification: z.string(), command: z.array(z.union([z.string(), z.array(z.string())])), append_wildcard: z.boolean().optional() });
 const VENDOR_CONFIG_TARGETS = ['claude', 'codex', 'opencode'] as const;
@@ -423,7 +430,7 @@ export async function loadMcps(root: string, packId: string): Promise<McpDef[]> 
   const out = [] as McpDef[];
   for (const file of files) {
     const parsed = mcpSchema.parse(parseTomlOrThrow(file, await readFile(file, 'utf8')));
-    out.push({ pack: packId, packRoot: root, ...parsed, id: normalizeDefinitionId('mcp', parsed.id), envVars: collectEnvVarsFromText(JSON.stringify(parsed)), sourcePath: file, sourceName: path.relative(root, file) });
+    out.push({ pack: packId, packRoot: root, ...parsed, id: normalizeDefinitionId('mcp', parsed.id), env: parsed.env, env_forward: parsed.env_forward, envVars: [...new Set([...collectEnvVarsFromText(JSON.stringify(parsed)), ...(parsed.env_forward ?? [])])].sort(), sourcePath: file, sourceName: path.relative(root, file) });
   }
   mapId(out, 'mcp');
   return out;

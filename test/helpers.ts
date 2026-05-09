@@ -51,7 +51,7 @@ export async function seed(root: string): Promise<void> {
   await writeFile(path.join(root, '.rac/skills/project-gates/SKILL.md'), '+++\ndescription = "project checks"\nassets = ["checklist.md"]\n[vendor.claude.frontmatter]\naudience = "claude"\n[vendor.codex.frontmatter]\naudience = "codex"\n[vendor.opencode.frontmatter]\naudience = "opencode"\n+++\nRun checks\n', 'utf8');
   await writeFile(path.join(root, '.rac/skills/project-gates/checklist.md'), '- test\n', 'utf8');
 
-  await writeFile(path.join(root, '.rac/mcps/project-rules.toml'), 'id = "project-rules"\ncommand = "node"\nargs = ["./mcp.js", "${PROJECT_RULES_TOKEN}"]\nstartup_timeout_ms = 1200\n', 'utf8');
+  await writeFile(path.join(root, '.rac/mcps/project-rules.toml'), 'id = "project-rules"\ncommand = "node"\nargs = ["./mcp.js"]\nstartup_timeout_ms = 1200\nenv_forward = ["PROJECT_RULES_TOKEN"]\n\n[env]\nLOG_LEVEL = "info"\n', 'utf8');
 
   await writeFile(path.join(root, '.rac/rules/wrappers.toml'), '[[rule]]\nid = "deny-gh-pr-merge"\ndecision = "forbidden"\njustification = "Use wrapper"\ncommand = ["gh", ["pr", "issue"], "merge"]\n\n[[rule]]\nid = "deny-git-push"\ndecision = "forbidden"\njustification = "Use wrapper"\ncommand = ["git", "push"]\nappend_wildcard = false\n', 'utf8');
 }

@@ -470,7 +470,8 @@ describe('install + doctor', () => {
     expect(opencode.mcp['project-rules']).toEqual({
       type: 'local',
       enabled: true,
-      command: ['node', './mcp.js', '${PROJECT_RULES_TOKEN}']
+      command: ['node', './mcp.js'],
+      environment: { LOG_LEVEL: 'info', PROJECT_RULES_TOKEN: '{env:PROJECT_RULES_TOKEN}' }
     });
     expect(opencode.mcp['a-remote']).toEqual({
       type: 'remote',
@@ -481,7 +482,7 @@ describe('install + doctor', () => {
     const local = opencode.mcp['project-rules'] as { command?: unknown; args?: unknown };
     expect(Array.isArray(local.command)).toBe(true);
     expect(local).not.toHaveProperty('args');
-    expect(local.command).not.toEqual({ command: 'node', args: ['./mcp.js', '${PROJECT_RULES_TOKEN}'] });
+    expect(local.command).not.toEqual({ command: 'node', args: ['./mcp.js'] });
   });
 
   it('vendor compatibility schema: Codex MCP config emits startup_timeout_sec and never startup_timeout', async () => {

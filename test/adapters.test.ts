@@ -4,7 +4,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { adapterFor, TARGET_ADAPTERS } from '../src/adapters/target-adapters.js';
-import { buildRuntimeConfig } from '../src/core/config-model.js';
+import { buildRuntimeConfig, type RuntimeConfig } from '../src/core/config-model.js';
 import { install } from '../src/core/install.js';
 import { loadAgents, loadMcps, loadRules, loadSkills } from '../src/core/parsers.js';
 
@@ -168,5 +168,108 @@ describe('runtime config + adapters', () => {
 
   it('registers adapters in table-driven list', () => {
     expect(TARGET_ADAPTERS.map((adapter) => adapter.target).sort()).toEqual(['claude', 'codex', 'opencode']);
+  });
+
+  it('env and envForward render correctly per target adapter', async () => {
+    const root = await makeTmp();
+    await mkdir(path.join(root, '.rac/mcps'), { recursive: true });
+
+    const config: RuntimeConfig = {
+      pack: 'project',
+      agents: [],
+      skills: [],
+      mcps: [{
+        pack: 'project',
+        id: 'test-mcp',
+        source: { pack: 'project', absPath: '/fake/mcps/test-mcp.toml', relPath: 'mcps/test-mcp.toml' },
+        envRefs: ['T'],
+        env: { L: 'v' },
+        envForward: ['T'],
+        transport: { kind: 'local', command: 'node', args: ['./mcp.js'] }
+      }],
+      rules: [],
+      configs: [],
+      warnings: []
+    };
+
+    // Claude: merged env map with ${K} for forwards
+    const claudeOutputs = adapterFor('claude').plan(config, 'project');
+    const claudeMcpOutput = claudeOutputs.find((o) => o.kind === 'mcp');
+    expect(claudeMcpOutput).toBeDefined();
+    const claudeParsed = JSON.parse(claudeMcpOutput!.content!) as { mcpServers: Record<string, { env?: Record<string, string> }> };
+    expect(claudeParsed.mcpServers['test-mcp'].env).toEqual({ L: 'v', T: '${T}' });
+
+    // Codex: separate env (literals) and env_vars (forwards)
+    const { parse: parseToml } = await import('smol-toml');
+    const codexOutputs = adapterFor('codex').plan(config, 'project');
+    const codexMcpOutput = codexOutputs.find((o) => o.kind === 'mcp');
+    expect(codexMcpOutput).toBeDefined();
+    const codexParsed = parseToml(codexMcpOutput!.content!) as { mcp_servers: Record<string, { env?: Record<string, string>; env_vars?: string[] }> };
+    expect(codexParsed.mcp_servers['test-mcp'].env).toEqual({ L: 'v' });
+    expect(codexParsed.mcp_servers['test-mcp'].env_vars).toEqual(['T']);
+
+    // OpenCode: merged environment map with {env:K} for forwards
+    const opencodeOutputs = adapterFor('opencode').plan(config, 'project');
+    const opencodeMcpOutput = opencodeOutputs.find((o) => o.kind === 'mcp');
+    expect(opencodeMcpOutput).toBeDefined();
+    const opencodeRaw = opencodeMcpOutput!.content!.replace(/^\/\/.*\n/, '');
+    const opencodeParsed = JSON.parse(opencodeRaw) as { mcp: Record<string, { environment?: Record<string, string> }> };
+    expect(opencodeParsed.mcp['test-mcp'].environment).toEqual({ L: 'v', T: '{env:T}' });
+  });
+
+  it('env and envForward vendor-key collision detection per target', async () => {
+    const root = await makeTmp();
+    await mkdir(path.join(root, '.rac/mcps'), { recursive: true });
+
+    const baseConfig = (vendorConfig?: RuntimeConfig['mcps'][0]['vendorConfig']): RuntimeConfig => ({
+      pack: 'project',
+      agents: [],
+      skills: [],
+      mcps: [{
+        pack: 'project',
+        id: 'test-mcp',
+        source: { pack: 'project', absPath: '/fake/mcps/test-mcp.toml', relPath: 'mcps/test-mcp.toml' },
+        envRefs: ['K'],
+        env: { K: 'v' },
+        envForward: ['K2'],
+        transport: { kind: 'local', command: 'node', args: ['./mcp.js'] },
+        vendorConfig
+      }],
+      rules: [],
+      configs: [],
+      warnings: []
+    });
+
+    // Claude: top-level env conflicts with vendor.claude.config.env
+    expect(() => adapterFor('claude').plan(baseConfig({ claude: { env: { K: 'other' } } }), 'project'))
+      .toThrow();
+
+    // Codex: top-level env conflicts with vendor.codex.config.env
+    expect(() => adapterFor('codex').plan(baseConfig({ codex: { env: { K: 'other' } } }), 'project'))
+      .toThrow();
+
+    // Codex: top-level envForward conflicts with vendor.codex.config.env_vars
+    const codexForwardConflictConfig: RuntimeConfig = {
+      pack: 'project',
+      agents: [],
+      skills: [],
+      mcps: [{
+        pack: 'project',
+        id: 'test-mcp',
+        source: { pack: 'project', absPath: '/fake/mcps/test-mcp.toml', relPath: 'mcps/test-mcp.toml' },
+        envRefs: ['K'],
+        envForward: ['K'],
+        transport: { kind: 'local', command: 'node', args: ['./mcp.js'] },
+        vendorConfig: { codex: { env_vars: ['K'] } }
+      }],
+      rules: [],
+      configs: [],
+      warnings: []
+    };
+    expect(() => adapterFor('codex').plan(codexForwardConflictConfig, 'project')).toThrow();
+
+    // OpenCode: top-level env conflicts with vendor.opencode.config.environment
+    expect(() => adapterFor('opencode').plan(baseConfig({ opencode: { environment: { K: 'other' } } }), 'project'))
+      .toThrow();
   });
 });
