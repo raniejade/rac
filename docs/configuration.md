@@ -288,9 +288,12 @@ Validate definitions and print warnings.
 rac doctor [--targets claude,codex,opencode] [--kind agent,skill,mcp,rule,config] [--scope project|user]
 ```
 
-- Prints `ok` when no warnings are found.
+- Prints `✓ No issues found.` (plain mode: `No issues found.`) when no warnings are found.
+- Warnings are rendered with severity badges: `ERROR`, `WARN`, or `INFO`. Exits 1 when any `ERROR`-severity warning is present.
 - Warns for missing MCP env vars.
 - Warns for legacy OpenCode vendor tools when `--targets` includes `opencode` and `--kind` includes `agent`.
+
+Pass `--plain` / `-p` (or set `NO_COLOR=1`, `CI=true`, or unset `FORCE_COLOR` in a non-TTY environment) to suppress color and symbols in the output.
 
 ### `install`
 
