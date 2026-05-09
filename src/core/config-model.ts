@@ -2,12 +2,17 @@ import crypto from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { AgentDef, McpDef, Pack, RuleDecision, RuleDef, SkillDef, Target, VendorConfigDef } from './types.js';
+import type { AgentDef, Kind, McpDef, Pack, RuleDecision, RuleDef, SkillDef, Target, VendorConfigDef } from './types.js';
 import { assertNoTraversal, rel } from './util.js';
 
+export type WarningSeverity = 'error' | 'warn' | 'info';
+
 export type ConfigWarning = {
-  code: 'opencode_legacy_tools';
+  severity: WarningSeverity;
+  code: 'opencode_legacy_tools' | 'missing_env_var' | string;
   message: string;
+  hint?: string;
+  context?: { target?: Target; kind?: Kind; id?: string; pack?: Pack };
 };
 
 export type SourceInfo = {
@@ -241,7 +246,7 @@ export async function buildRuntimeConfig(input: BuildRuntimeConfigInput): Promis
     const codexConfig = targetVendorMap(agent.vendor, 'codex', 'config');
     const opencodeConfig = targetVendorMap(agent.vendor, 'opencode', 'config');
 
-    if (opencodeLegacyTools) warnings.push({ code: 'opencode_legacy_tools', message: `opencode vendor tools is legacy for agent ${agent.id}; prefer canonical tools` });
+    if (opencodeLegacyTools) warnings.push({ severity: 'warn', code: 'opencode_legacy_tools', message: `opencode vendor tools is legacy for agent ${agent.id}; prefer canonical tools`, context: { kind: 'agent', id: agent.id, target: 'opencode' } });
 
     return {
       pack: agent.pack,

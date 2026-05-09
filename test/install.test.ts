@@ -788,8 +788,8 @@ describe('install + doctor', () => {
     await seed(root);
 
     const warnings = await doctor(root, ['codex', 'opencode'], ['agent', 'mcp']);
-    expect(warnings.join('\n')).toContain('missing env var: PROJECT_RULES_TOKEN');
-    expect(warnings.join('\n')).toContain('opencode vendor tools is legacy for agent reviewer');
+    expect(warnings.some((w) => w.code === 'missing_env_var' && w.message.includes('PROJECT_RULES_TOKEN'))).toBe(true);
+    expect(warnings.some((w) => w.code === 'opencode_legacy_tools' && w.message.includes('reviewer'))).toBe(true);
   });
 
   it('vendor pass-through: MCP config supports vendor.<target>.config for claude/codex/opencode', async () => {
@@ -1163,7 +1163,7 @@ describe('install + doctor', () => {
 
     const warnings = await doctor(root, undefined, ['agent']);
 
-    expect(warnings.some((w) => w.includes('opencode'))).toBe(false);
+    expect(warnings.some((w) => w.code === 'opencode_legacy_tools')).toBe(false);
   });
 
   it('doctor CLI targets override config targets', async () => {
@@ -1175,6 +1175,6 @@ describe('install + doctor', () => {
 
     const warnings = await doctor(root, ['opencode'], ['agent']);
 
-    expect(warnings.some((w) => w.includes('opencode'))).toBe(true);
+    expect(warnings.some((w) => w.code === 'opencode_legacy_tools')).toBe(true);
   });
 });

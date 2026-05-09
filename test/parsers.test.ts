@@ -58,7 +58,7 @@ describe('parsers', () => {
 
     const listEmpty = runCli(root, ['pack', 'list']);
     expect(listEmpty.status).toBe(0);
-    expect(listEmpty.stdout).toBe('-\n');
+    expect(listEmpty.stdout).toBe('No packs configured.\n');
 
     const missingRef = runCli(root, ['pack', 'add', 'alpha', 'github:owner/alpha']);
     expect(missingRef.status).toBe(2);
@@ -77,7 +77,7 @@ describe('parsers', () => {
 
     const listOne = runCli(root, ['pack', 'list']);
     expect(listOne.status).toBe(0);
-    expect(listOne.stdout).toBe('alpha github:owner/alpha tag"\\candidate\n');
+    expect(listOne.stdout).toBe('alpha  github:owner/alpha @ tag"\\candidate\n');
 
     const removeMissing = runCli(root, ['pack', 'remove', 'missing']);
     expect(removeMissing.status).toBe(1);

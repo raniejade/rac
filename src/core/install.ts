@@ -6,6 +6,7 @@ import { pickMergeStrategy } from '../adapters/merge-strategies.js';
 import { adapterFor, vendorManifestRelPath } from '../adapters/target-adapters.js';
 
 import { buildRuntimeConfig } from './config-model.js';
+import type { ConfigWarning } from './config-model.js';
 import { deleteManifest, loadManifest, saveManifest } from './manifest.js';
 import { loadAgents, loadInstallSettings, loadMcps, loadRules, loadSkills, loadVendorConfigs, resolvePacks } from './parsers.js';
 import type { InstallChange, InstallManifest, InstallOptions, InstallResult, Kind, ManifestRecord, Scope, Target } from './types.js';
@@ -595,7 +596,7 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
   };
 }
 
-export async function doctor(cwd: string, targets: Target[] | undefined, kinds: Kind[], scope: Scope = 'project'): Promise<string[]> {
+export async function doctor(cwd: string, targets: Target[] | undefined, kinds: Kind[], scope: Scope = 'project'): Promise<ConfigWarning[]> {
   const sourceCwd = scope === 'user' ? (process.env.RAC_HOME?.trim() || os.homedir()) : cwd;
   const root = path.join(sourceCwd, '.rac');
   const installSettings = await loadInstallSettings(root);
@@ -619,19 +620,25 @@ export async function doctor(cwd: string, targets: Target[] | undefined, kinds: 
   assertNoCrossPackDuplicate(parsedRules, 'rule');
   const config = await buildRuntimeConfig({ root, agents: parsedAgents, skills: parsedSkills, mcps: parsedMcps, rules: parsedRules, configs: parsedConfigs });
 
-  const warnings: string[] = [];
+  const warnings: ConfigWarning[] = [];
 
   if (kinds.includes('mcp')) {
     for (const mcp of config.mcps) {
       for (const envRef of mcp.envRefs) {
-        if (!process.env[envRef]) warnings.push(`missing env var: ${envRef} (referenced by mcp ${mcp.id})`);
+        if (!process.env[envRef]) warnings.push({
+          severity: 'error',
+          code: 'missing_env_var',
+          message: `missing env var: ${envRef} (referenced by mcp ${mcp.id})`,
+          hint: 'set the env var or remove the reference',
+          context: { kind: 'mcp', id: mcp.id }
+        });
       }
     }
   }
 
   if (kinds.includes('agent')) {
     if (resolvedTargets.includes('opencode')) {
-      warnings.push(...config.warnings.filter((warning) => warning.code === 'opencode_legacy_tools').map((warning) => warning.message));
+      warnings.push(...config.warnings.filter((w) => w.code === 'opencode_legacy_tools'));
     }
   }
 

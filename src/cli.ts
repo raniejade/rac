@@ -3,6 +3,7 @@ import { Command, InvalidArgumentError } from 'commander';
 
 import pkg from '../package.json' with { type: 'json' };
 
+import { detectColorMode, renderDoctor, renderEmpty, renderInstall, renderList, renderSuccess } from './cli/output/index.js';
 import { doctor, initProject, install } from './core/install.js';
 import { addProjectPack, listProjectPacks, removeProjectPack } from './core/pack-config.js';
 import type { Kind, Scope, Target } from './core/types.js';
@@ -47,6 +48,7 @@ program
     if (error.code?.startsWith('commander.')) process.exit(2);
     process.exit(1);
   })
+  .option('-p, --plain', 'disable color/styling output')
   .version(pkg.version, '-v, --version', 'output the current version');
 
 program.command('init')
@@ -54,7 +56,9 @@ program.command('init')
   .option('--empty', 'create folders only without starter examples')
   .option('--scope <scope>', 'project|user (default project)')
   .action(async (opts: { empty?: boolean; scope?: string }) => {
+    const mode = detectColorMode({ plainFlag: !!(program.opts() as { plain?: boolean }).plain });
     await initProject(process.cwd(), !!opts.empty, normalizeScope(opts.scope));
+    process.stdout.write(renderSuccess(`Initialized .rac (${normalizeScope(opts.scope)} scope)`, mode));
   });
 
 program.command('install')
@@ -69,6 +73,7 @@ program.command('install')
   .option('--scope <scope>', 'project|user (default project)')
   .option('--no-merge', 'bypass surgical merge of shared config files; write generated content wholesale')
   .action(async (opts: { targets?: string; kind?: string; dryRun?: boolean; clean?: boolean; check?: boolean; force?: boolean; refreshPacks?: boolean; scope?: string; noMerge?: boolean }) => {
+    const mode = detectColorMode({ plainFlag: !!(program.opts() as { plain?: boolean }).plain });
     const result = await install({
       targets: normalizeTargets(opts.targets),
       kinds: normalizeKinds(opts.kind),
@@ -81,9 +86,12 @@ program.command('install')
       noMerge: opts.noMerge ? true : undefined,
       cwd: process.cwd()
     });
-    console.log(`create:\n${result.create.join('\n') || '-'}`);
-    console.log(`update:\n${result.update.join('\n') || '-'}`);
-    console.log(`delete:\n${result.del.join('\n') || '-'}`);
+    process.stdout.write(renderInstall(result, {
+      cwd: process.cwd(),
+      mode,
+      check: !!opts.check,
+      dryRun: !!opts.dryRun
+    }));
   });
 
 program.command('doctor')
@@ -92,12 +100,10 @@ program.command('doctor')
   .option('--kind <kinds>', 'comma-separated: agent,skill,mcp,rule,config')
   .option('--scope <scope>', 'project|user (default project)')
   .action(async (opts: { targets?: string; kind?: string; scope?: string }) => {
+    const mode = detectColorMode({ plainFlag: !!(program.opts() as { plain?: boolean }).plain });
     const warnings = await doctor(process.cwd(), normalizeTargets(opts.targets), normalizeKinds(opts.kind), normalizeScope(opts.scope));
-    if (warnings.length === 0) {
-      console.log('ok');
-      return;
-    }
-    for (const warning of warnings) console.log(warning);
+    process.stdout.write(renderDoctor(warnings, mode));
+    if (warnings.some((w) => w.severity === 'error')) process.exit(1);
   });
 
 const packProgram = program.command('pack')
@@ -109,25 +115,30 @@ packProgram.command('add')
   .argument('<repo>')
   .requiredOption('--ref <ref>')
   .action(async (id: string, repo: string, opts: { ref: string }) => {
+    const mode = detectColorMode({ plainFlag: !!(program.opts() as { plain?: boolean }).plain });
     await addProjectPack(process.cwd(), { id, repo, ref: opts.ref });
+    process.stdout.write(renderSuccess(`Added pack ${id}`, mode));
   });
 
 packProgram.command('list')
   .description('List configured shared packs')
   .action(async () => {
+    const mode = detectColorMode({ plainFlag: !!(program.opts() as { plain?: boolean }).plain });
     const packs = await listProjectPacks(process.cwd());
     if (packs.length === 0) {
-      console.log('-');
-      return;
+      process.stdout.write(renderEmpty('No packs configured.', mode));
+    } else {
+      process.stdout.write(renderList(packs.map((p) => ({ left: p.id, right: `${p.repo} @ ${p.ref}` })), mode));
     }
-    for (const pack of packs) console.log(`${pack.id} ${pack.repo} ${pack.ref}`);
   });
 
 packProgram.command('remove')
   .description('Remove a shared pack reference by id')
   .argument('<id>')
   .action(async (id: string) => {
+    const mode = detectColorMode({ plainFlag: !!(program.opts() as { plain?: boolean }).plain });
     await removeProjectPack(process.cwd(), id);
+    process.stdout.write(renderSuccess(`Removed pack ${id}`, mode));
   });
 
 program.parseAsync(process.argv).catch((error) => {
