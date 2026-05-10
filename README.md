@@ -20,16 +20,16 @@ Project scope reads `<cwd>/.rac/` and writes project-local vendor outputs.
 
 ```bash
 # Scaffold .rac/ in the current project
-npx github:raniejade/rac init
+npx @raniejade/rac init
 
 # Validate source definitions
-npx github:raniejade/rac doctor
+npx @raniejade/rac doctor
 
 # Preview generated project outputs
-npx github:raniejade/rac install --dry-run
+npx @raniejade/rac install --dry-run
 
 # Apply generated project outputs
-npx github:raniejade/rac install
+npx @raniejade/rac install
 ```
 
 ## User Quick Start
@@ -38,16 +38,16 @@ User scope reads `~/.rac/` and writes global/home config surfaces.
 
 ```bash
 # Scaffold ~/.rac/
-npx github:raniejade/rac init --scope user
+npx @raniejade/rac init --scope user
 
 # Validate ~/.rac/
-npx github:raniejade/rac doctor --scope user
+npx @raniejade/rac doctor --scope user
 
 # Preview global outputs
-npx github:raniejade/rac install --scope user --dry-run
+npx @raniejade/rac install --scope user --dry-run
 
 # Apply global outputs
-npx github:raniejade/rac install --scope user
+npx @raniejade/rac install --scope user
 ```
 
 For dotfiles, manage the `.rac` tree directly in your dotfiles repo and deploy or symlink it to `~/.rac`. `RAC_HOME` is for relocation/testing because it changes the user-scope source home and the Claude/Codex target home; OpenCode user outputs still follow `XDG_CONFIG_HOME`.
@@ -58,16 +58,16 @@ For dotfiles, manage the `.rac` tree directly in your dotfiles repo and deploy o
 
 ```bash
 # Preview what would be removed (project scope)
-npx github:raniejade/rac uninstall --dry-run
+npx @raniejade/rac uninstall --dry-run
 
 # Remove everything RAC installed in this project
-npx github:raniejade/rac uninstall --yes
+npx @raniejade/rac uninstall --yes
 
 # Remove a single target/kind combination
-npx github:raniejade/rac uninstall --targets claude --kind rule --yes
+npx @raniejade/rac uninstall --targets claude --kind rule --yes
 
 # User scope
-npx github:raniejade/rac uninstall --scope user --yes
+npx @raniejade/rac uninstall --scope user --yes
 ```
 
 Without `--yes`, the command prompts for confirmation. Non-interactive shells without `--yes` exit with an error.
@@ -77,9 +77,9 @@ Without `--yes`, the command prompts for confirmation. Non-interactive shells wi
 Project `.rac/config.toml` can reference shared packs:
 
 ```bash
-npx github:raniejade/rac pack add platform-rules github:owner/repo --ref main
-npx github:raniejade/rac pack list
-npx github:raniejade/rac install --refresh-packs --dry-run
+npx @raniejade/rac pack add platform-rules github:owner/repo --ref main
+npx @raniejade/rac pack list
+npx @raniejade/rac install --refresh-packs --dry-run
 ```
 
 Pack commands edit the current project's `.rac/config.toml`.
