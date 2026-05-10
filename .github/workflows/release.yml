@@ -1,73 +1,44 @@
-name: Release
+name: Create Release
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
-  group: release
+  group: create-release
   cancel-in-progress: false
 
 jobs:
-  release:
+  create-release:
     runs-on: ubuntu-latest
     permissions:
-      contents: write       # commit version bump, push tag
-      id-token: write       # npm OIDC trusted publishing + provenance
+      contents: write          # push the changeset-release/main branch
+      pull-requests: write     # open/update the Version Packages PR
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          registry-url: 'https://registry.npmjs.org'
           cache: npm
 
       - run: npm ci
 
-      # Quality gate — same as CI
+      # Quality gate — same as CI; gives the PR a clean baseline.
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
 
-      - name: Fail if no pending changesets
-        run: |
-          count=$(find .changeset -maxdepth 1 -type f -name '*.md' ! -name 'README.md' | wc -l)
-          if [ "$count" -eq 0 ]; then
-            echo "No pending changesets. Add one with 'npm run changeset' before releasing." >&2
-            exit 1
-          fi
-
-      - name: Configure git
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-      - name: Apply changesets (bump version + write CHANGELOG)
-        run: npx changeset version
+      - name: Create or update Version Packages PR
+        uses: changesets/action@v1
+        with:
+          version: npx changeset version
+          # No `publish:` input — publishing is a separate workflow.
+          title: "chore(release): version packages"
+          commit: "chore(release): version packages"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Read new version
-        id: pkg
-        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
-
-      - name: Commit and tag
-        run: |
-          git add -A
-          git commit -m "chore(release): v${{ steps.pkg.outputs.version }}"
-          git tag "v${{ steps.pkg.outputs.version }}"
-          git push origin HEAD:main
-          git push origin "v${{ steps.pkg.outputs.version }}"
-
-      - name: Publish to npm (OIDC + provenance)
-        run: npx changeset publish
-        # No NODE_AUTH_TOKEN — OIDC trusted publishing handles auth.
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ steps.pkg.outputs.version }}
-          generate_release_notes: true
