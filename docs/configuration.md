@@ -353,6 +353,34 @@ Remove a top-level `[[packs]]` entry by id from the current project's `.rac/conf
 rac pack remove <id>
 ```
 
+### `uninstall`
+
+Remove RAC-managed files and prune RAC-managed selectors from shared config files using install manifests as the source of truth. User content in shared files is preserved.
+
+```bash
+rac uninstall [--targets claude,codex,opencode] [--kind agent,skill,mcp,rule,config] [--scope project|user] [--dry-run] [--yes]
+```
+
+- `--dry-run`: preview what would be removed without writing or deleting.
+- `--yes`: skip the interactive confirmation prompt. Required in non-interactive shells.
+- `--targets` / `--kind` / `--scope`: same semantics as `install`.
+
+Without `--yes`, the command prints the removal plan and prompts for confirmation. Non-interactive shells without `--yes` exit with an error.
+
+```bash
+# Preview what would be removed (project scope)
+npx @raniejade/rac uninstall --dry-run
+
+# Remove everything RAC installed in this project
+npx @raniejade/rac uninstall --yes
+
+# Remove a single target/kind combination
+npx @raniejade/rac uninstall --targets claude --kind rule --yes
+
+# User scope
+npx @raniejade/rac uninstall --scope user --yes
+```
+
 ## Target Outputs and Install Manifests
 
 Install manifests track managed files and cleanup behavior.

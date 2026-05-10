@@ -52,26 +52,6 @@ npx @raniejade/rac install --scope user
 
 For dotfiles, manage the `.rac` tree directly in your dotfiles repo and deploy or symlink it to `~/.rac`. `RAC_HOME` is for relocation/testing because it changes the user-scope source home and the Claude/Codex target home; OpenCode user outputs still follow `XDG_CONFIG_HOME`.
 
-## Uninstall
-
-`rac uninstall` removes RAC-managed files and prunes RAC-managed selectors from shared config files using the install manifests as the source of truth. User content in shared files is preserved.
-
-```bash
-# Preview what would be removed (project scope)
-npx @raniejade/rac uninstall --dry-run
-
-# Remove everything RAC installed in this project
-npx @raniejade/rac uninstall --yes
-
-# Remove a single target/kind combination
-npx @raniejade/rac uninstall --targets claude --kind rule --yes
-
-# User scope
-npx @raniejade/rac uninstall --scope user --yes
-```
-
-Without `--yes`, the command prompts for confirmation. Non-interactive shells without `--yes` exit with an error.
-
 ## Shared Packs
 
 Project `.rac/config.toml` can reference shared packs:
