@@ -14,31 +14,31 @@ import { cleanupTmpDirs, makeTmp, readJsoncFile, runCliInProcess, seed } from '.
 afterEach(cleanupTmpDirs);
 
 describe('install + doctor', () => {
-  it('init refuses overwrite and install copies only declared assets', async () => {
+  it('init refuses overwrite and install auto-discovers all non-SKILL files', async () => {
     const root = await makeTmp();
     await initProject(root, false);
     await expect(initProject(root, false)).rejects.toThrow('refusing to overwrite existing init examples');
 
     await seed(root);
-    await writeFile(path.join(root, '.rac/skills/project-gates/extra.txt'), 'ignored', 'utf8');
+    await writeFile(path.join(root, '.rac/skills/project-gates/extra.txt'), 'extra', 'utf8');
+    await mkdir(path.join(root, '.rac/skills/project-gates/references'), { recursive: true });
+    await writeFile(path.join(root, '.rac/skills/project-gates/references/notes.md'), 'notes', 'utf8');
+    await writeFile(path.join(root, '.rac/skills/project-gates/.DS_Store'), 'junk', 'utf8');
     await install({ cwd: root, targets: ['claude'], kinds: ['skill'] });
 
     await expect(stat(path.join(root, '.claude/skills/project-gates/checklist.md'))).resolves.toBeTruthy();
-    await expect(stat(path.join(root, '.claude/skills/project-gates/extra.txt'))).rejects.toThrow();
+    await expect(stat(path.join(root, '.claude/skills/project-gates/extra.txt'))).resolves.toBeTruthy();
+    await expect(stat(path.join(root, '.claude/skills/project-gates/references/notes.md'))).resolves.toBeTruthy();
+    await expect(stat(path.join(root, '.claude/skills/project-gates/.DS_Store'))).rejects.toThrow();
   });
 
-  it('rejects traversal from agent instructions and skill assets', async () => {
+  it('rejects traversal from agent instructions', async () => {
     const root = await makeTmp();
     await mkdir(path.join(root, '.rac/agents'), { recursive: true });
-    await mkdir(path.join(root, '.rac/skills/s1'), { recursive: true });
     await writeFile(path.join(root, '.rac/config.toml'), '', 'utf8');
 
     await writeFile(path.join(root, '.rac/agents/a.toml'), 'id = "a"\ninstructions = "../../etc/passwd"\n', 'utf8');
     await expect(install({ cwd: root, targets: ['codex'], kinds: ['agent'] })).rejects.toThrow('agent instructions traversal rejected');
-
-    await writeFile(path.join(root, '.rac/agents/a.toml'), 'id = "a"\ninstructions = "inline"\n', 'utf8');
-    await writeFile(path.join(root, '.rac/skills/s1/SKILL.md'), '+++\ndescription = "d"\nassets = ["../bad.txt"]\n+++\nbody\n', 'utf8');
-    await expect(install({ cwd: root, targets: ['codex'], kinds: ['skill'] })).rejects.toThrow('skill asset traversal rejected');
   });
 
   it('surgically merges existing unmanaged shared json by default; --no-merge refuses without --force; dry-run writes nothing', async () => {

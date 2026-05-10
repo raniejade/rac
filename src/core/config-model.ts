@@ -254,8 +254,12 @@ export async function buildRuntimeConfig(input: BuildRuntimeConfigInput): Promis
     assertNoSharedKeys(opencodeConfig, opencodeFrontmatter, `skill ${skill.id} vendor.opencode.config conflicts with vendor.opencode.frontmatter`);
 
     const baseFrontmatter = stripVendor({ ...skill.frontmatter, name: skill.id, description: skill.description });
+    const skillDir = path.dirname(skill.sourcePath);
     const assets = await Promise.all((skill.assets ?? []).map(async (assetRelativePath): Promise<SkillAssetConfig> => {
-      const sourceFile = assertNoTraversal(path.dirname(skill.sourcePath), assetRelativePath, 'skill asset');
+      const sourceFile = path.resolve(skillDir, assetRelativePath);
+      if (!sourceFile.startsWith(skillDir + path.sep)) {
+        throw new Error(`skill ${skill.id} asset escapes skill dir: ${assetRelativePath}`);
+      }
       const content = await readFile(sourceFile);
       return {
         pack: skill.pack,

@@ -16,7 +16,7 @@ const GITHUB_REPO_RE = /^github:([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)$/;
 const REF_RE = /^\S+$/;
 
 const agentSchema = z.object({ id: z.string().min(1), name: z.string().optional(), description: z.string().optional(), instructions: z.string().min(1), tools: z.array(z.string()).optional(), vendor: z.record(z.unknown()).optional() });
-const skillSchema = z.object({ name: z.string().optional(), description: z.string().min(1), assets: z.array(z.string()).optional(), vendor: z.record(z.unknown()).optional() });
+const skillSchema = z.object({ name: z.string().optional(), description: z.string().min(1), vendor: z.record(z.unknown()).optional() });
 const mcpSchema = z.object({ id: z.string().min(1), command: z.string().optional(), args: z.array(z.string()).optional(), url: z.string().optional(), startup_timeout_ms: z.number().int().positive().optional(), vendor: z.record(z.unknown()).optional(), env: z.record(z.string(), z.string()).optional(), env_forward: z.array(z.string().min(1)).optional() }).superRefine((v, ctx) => {
   const hasLocal = !!v.command;
   const hasRemote = !!v.url;
@@ -390,6 +390,27 @@ export async function loadSkills(root: string, packId: string): Promise<SkillDef
     const closingIndex = raw.indexOf('\n+++\n', 3);
     if (closingIndex < 0) throw new Error(`missing closing +++ delimiter: ${file}`);
     const frontmatter = skillSchema.parse(parseTomlOrThrow(file, raw.slice(4, closingIndex + 1)));
+    const skillDir = path.dirname(file);
+    const discovered = await fg('**/*', {
+      cwd: skillDir,
+      dot: false,
+      onlyFiles: true,
+      followSymbolicLinks: false,
+      absolute: false
+    });
+    const assets = discovered
+      .filter((rel) => {
+        const base = path.posix.basename(rel);
+        return base !== 'SKILL.md' && base !== 'SKILL.tpl.md';
+      })
+      .map((rel) => rel.split(path.sep).join('/'))
+      .sort();
+    for (const rel of assets) {
+      const abs = path.resolve(skillDir, rel);
+      if (!abs.startsWith(skillDir + path.sep)) {
+        throw new Error(`skill asset escapes skill dir: ${path.relative(root, file)}: ${rel}`);
+      }
+    }
     out.push({
       pack: packId,
       packRoot: root,
@@ -399,7 +420,7 @@ export async function loadSkills(root: string, packId: string): Promise<SkillDef
       body: raw.slice(closingIndex + 5),
       bodyIsTemplate: path.basename(file) === 'SKILL.tpl.md',
       frontmatter,
-      assets: frontmatter.assets ?? [],
+      assets,
       sourcePath: file,
       sourceName: path.relative(root, file)
     });

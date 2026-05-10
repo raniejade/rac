@@ -364,4 +364,25 @@ describe('parsers', () => {
     expect(ref.charCodeAt(1)).toBe(0x1b);
     expect(ref.length).toBe(5); // 'v' + ESC + '[' + '0' + 'm'
   });
+
+  it('loadSkills auto-discovers files in nested subdirs, excludes SKILL.md and dotfiles, returns sorted relative POSIX paths', async () => {
+    const root = await makeTmp();
+    await mkdir(path.join(root, '.rac/skills/s1/references'), { recursive: true });
+    await writeFile(path.join(root, '.rac/skills/s1/SKILL.md'), '+++\ndescription = "test skill"\n+++\nbody\n', 'utf8');
+    await writeFile(path.join(root, '.rac/skills/s1/checklist.md'), '- item\n', 'utf8');
+    await writeFile(path.join(root, '.rac/skills/s1/references/notes.md'), 'notes\n', 'utf8');
+    await writeFile(path.join(root, '.rac/skills/s1/.DS_Store'), 'junk', 'utf8');
+
+    const skills = await loadSkills(path.join(root, '.rac'), 'project');
+    expect(skills[0].assets).toEqual(['checklist.md', 'references/notes.md']);
+  });
+
+  it('loadSkills returns assets: [] when only SKILL.md exists', async () => {
+    const root = await makeTmp();
+    await mkdir(path.join(root, '.rac/skills/s1'), { recursive: true });
+    await writeFile(path.join(root, '.rac/skills/s1/SKILL.md'), '+++\ndescription = "test skill"\n+++\nbody\n', 'utf8');
+
+    const skills = await loadSkills(path.join(root, '.rac'), 'project');
+    expect(skills[0].assets).toEqual([]);
+  });
 });
