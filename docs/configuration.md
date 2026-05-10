@@ -269,7 +269,7 @@ CLI `--no-merge` wins over the config setting. It is subject to the same `--forc
 
 ## Command Reference
 
-Use `npx github:raniejade/rac ...` to run from GitHub, or replace it with `rac ...` when the binary is installed locally or globally.
+Use `npx @raniejade/rac ...` to run via npm, or replace it with `rac ...` when the binary is installed locally or globally.
 
 ### `init`
 
