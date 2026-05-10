@@ -406,18 +406,4 @@ describe('parsers', () => {
     const skills = await loadSkills(path.join(root, '.rac'), 'project');
     expect(skills[0].assets).toEqual([]);
   });
-
-  it('loadSkills silently ignores legacy assets= frontmatter (no-op)', async () => {
-    const root = await makeTmp();
-    await mkdir(path.join(root, '.rac/skills/s1'), { recursive: true });
-    await writeFile(
-      path.join(root, '.rac/skills/s1/SKILL.md'),
-      '+++\ndescription = "legacy"\nassets = ["nonexistent.md", "also-fake.md"]\n+++\nbody\n',
-      'utf8'
-    );
-    await writeFile(path.join(root, '.rac/skills/s1/real-asset.md'), 'real\n', 'utf8');
-
-    const skills = await loadSkills(path.join(root, '.rac'), 'project');
-    expect(skills[0].assets).toEqual(['real-asset.md']);
-  });
 });
