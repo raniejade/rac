@@ -1,4 +1,3 @@
-import { spawnSync } from 'node:child_process';
 import { stat } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -7,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { install } from '../src/core/install.js';
 import { uninstall } from '../src/core/uninstall.js';
 
-import { cleanupTmpDirs, ensureCliBuild, makeTmp, runCliInProcess, seed } from './helpers.js';
+import { cleanupTmpDirs, makeTmp, runCliInProcess, seed } from './helpers.js';
 
 afterEach(cleanupTmpDirs);
 
@@ -145,16 +144,7 @@ describe('rac uninstall CLI', () => {
     expect(installResult.status).toBe(0);
     await expect(exists(path.join(root, '.claude/agents/reviewer.md'))).resolves.toBe(true);
 
-    // Option B: keep one spawn for the piped-stdin test — the stream-listener path
-    // (process.stdin.on('data',...)) is difficult to mock reliably in-process
-    // because the real process.stdin is a ReadStream and replacing it can interfere
-    // with other stream infrastructure.
-    ensureCliBuild();
-    const uninstallResult = spawnSync(
-      'node',
-      [path.join(process.cwd(), 'dist/cli.js'), 'uninstall'],
-      { cwd: root, encoding: 'utf8', input: 'y\n' }
-    );
+    const uninstallResult = await runCliInProcess(root, ['uninstall'], { stdin: 'y\n' });
 
     expect(uninstallResult.status).toBe(0);
     await expect(exists(path.join(root, '.claude/agents/reviewer.md'))).resolves.toBe(false);

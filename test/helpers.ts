@@ -1,4 +1,3 @@
-import { spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
@@ -9,7 +8,6 @@ import { parse as parseJsonc } from 'jsonc-parser';
 import { createProgram } from '../src/cli.js';
 
 const tempDirs: string[] = [];
-let cliBuilt = false;
 
 export async function makeTmp(): Promise<string> {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'rac-'));
@@ -102,33 +100,6 @@ export async function runCliInProcess(
   }
 
   return { status, stdout: stdoutBuf, stderr: stderrBuf };
-}
-
-/**
- * Ensure the CLI binary is built. Used by tests that must spawn the real binary
- * (e.g. piped-stdin test that exercises the actual stream-listener path end-to-end).
- */
-export function ensureCliBuild(): void {
-  if (!cliBuilt) {
-    const build = spawnSync('npm', ['run', 'build'], { cwd: process.cwd(), encoding: 'utf8' });
-    if (build.status !== 0) throw new Error(`failed building CLI for tests: ${build.stderr || build.stdout}`);
-    cliBuilt = true;
-  }
-}
-
-/**
- * Spawn the CLI binary in a child process. Only kept for the one piped-stdin
- * test that exercises the real binary's stream-listener confirmation path.
- * All other tests should use runCliInProcess instead.
- */
-export function runCliSpawn(cwd: string, args: string[]): { status: number | null; stdout: string; stderr: string } {
-  ensureCliBuild();
-  const result = spawnSync('node', [path.join(process.cwd(), 'dist/cli.js'), ...args], { cwd, encoding: 'utf8' });
-  return {
-    status: result.status,
-    stdout: result.stdout,
-    stderr: result.stderr
-  };
 }
 
 export async function seed(root: string): Promise<void> {
