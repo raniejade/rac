@@ -123,6 +123,116 @@ async function preSeedUserScope(userHome, xdgConfig) {
   );
 }
 
+async function assertUninstallReverseProject(sampleRepo) {
+  // dry-run must succeed (exit 0) without applying any changes
+  await runCli(sampleRepo, ['uninstall', '--dry-run']);
+
+  // Apply uninstall
+  await runCli(sampleRepo, ['uninstall', '--yes']);
+
+  // Whole-file deletes: agent and skill outputs
+  await assertAbsent(path.join(sampleRepo, '.claude', 'agents', 'reviewer.md'), '.claude/agents/reviewer.md');
+  await assertAbsent(path.join(sampleRepo, '.codex', 'agents', 'reviewer.toml'), '.codex/agents/reviewer.toml');
+  await assertAbsent(path.join(sampleRepo, '.agents', 'skills', 'project-gates', 'SKILL.md'), '.agents/skills/project-gates/SKILL.md');
+  await assertAbsent(path.join(sampleRepo, '.codex', 'rules', 'wrapper-deny.rules'), '.codex/rules/wrapper-deny.rules');
+  await assertAbsent(path.join(sampleRepo, '.codex', 'rules', 'allow-git-status.rules'), '.codex/rules/allow-git-status.rules');
+
+  // Manifests deleted
+  await assertAbsent(path.join(sampleRepo, '.claude', '.rac-install-manifest.json'), '.claude/.rac-install-manifest.json');
+  await assertAbsent(path.join(sampleRepo, '.codex', '.rac-install-manifest.json'), '.codex/.rac-install-manifest.json');
+  await assertAbsent(path.join(sampleRepo, '.agents', '.rac-install-manifest.json'), '.agents/.rac-install-manifest.json');
+  await assertAbsent(path.join(sampleRepo, '.opencode', '.rac-install-manifest.json'), '.opencode/.rac-install-manifest.json');
+
+  // Shared files: RAC entries pruned but files may remain
+  // .mcp.json: should have no RAC mcpServers entries (expect empty or no mcpServers)
+  let mcpJson;
+  try {
+    const raw = await readFile(path.join(sampleRepo, '.mcp.json'), 'utf8');
+    mcpJson = JSON.parse(raw);
+  } catch {
+    mcpJson = null;
+  }
+  if (mcpJson !== null) {
+    assert(!mcpJson.mcpServers?.['project-rules'], 'uninstall left project-rules in .mcp.json');
+  }
+
+  // .claude/settings.json: no RAC deny entries remain
+  let claudeSettings;
+  try {
+    const raw = await readFile(path.join(sampleRepo, '.claude', 'settings.json'), 'utf8');
+    claudeSettings = JSON.parse(raw);
+  } catch {
+    claudeSettings = null;
+  }
+  if (claudeSettings !== null) {
+    const denyEntries = claudeSettings.permissions?.deny ?? [];
+    assert(!denyEntries.some((e) => e.startsWith('Bash(git push')), 'uninstall left rac deny entry in .claude/settings.json');
+  }
+
+  // .opencode/opencode.jsonc: no RAC mcp or permission entries remain
+  let opencodeJson;
+  try {
+    const raw = await readFile(path.join(sampleRepo, '.opencode', 'opencode.jsonc'), 'utf8');
+    opencodeJson = JSON.parse(raw.replace(/^\/\/.*\n/, ''));
+  } catch {
+    opencodeJson = null;
+  }
+  if (opencodeJson !== null) {
+    assert(!opencodeJson.mcp?.['project-rules'], 'uninstall left project-rules in .opencode/opencode.jsonc');
+    const bashKeys = Object.keys(opencodeJson.permission?.bash ?? {});
+    assert(!bashKeys.some((cmd) => cmd.startsWith('git push')), 'uninstall left rac permission.bash entry in .opencode/opencode.jsonc');
+  }
+
+  // .codex/config.toml: no RAC mcp_servers entries remain
+  let codexToml;
+  try {
+    const raw = await readFile(path.join(sampleRepo, '.codex', 'config.toml'), 'utf8');
+    codexToml = parseToml(raw);
+  } catch {
+    codexToml = null;
+  }
+  if (codexToml !== null) {
+    assert(!codexToml.mcp_servers?.['project-rules'], 'uninstall left project-rules in .codex/config.toml');
+  }
+}
+
+async function assertUninstallPreservesUserScope(userHome, xdgConfig, cwd, env) {
+  // Run uninstall in user scope
+  await runCli(cwd, ['uninstall', '--scope', 'user', '--yes'], env);
+
+  // ~/.codex/config.toml: user keys preserved, RAC entries gone
+  const codexToml = parseToml(await readFile(path.join(userHome, '.codex', 'config.toml'), 'utf8'));
+  assert(codexToml.approval_policy === 'on-failure', 'uninstall dropped user approval_policy from .codex/config.toml');
+  assert(codexToml.projects?.['/Users/me/foo']?.trust_level === 'trusted', 'uninstall dropped user [projects.*] from .codex/config.toml');
+  assert(!codexToml.mcp_servers?.['project-rules'], 'uninstall left rac mcp_servers.project-rules in .codex/config.toml');
+
+  // ~/.claude.json: user keys preserved, RAC entries gone
+  const claudeJson = JSON.parse(await readFile(path.join(userHome, '.claude.json'), 'utf8'));
+  assert(claudeJson.theme === 'dark', 'uninstall dropped user theme from .claude.json');
+  assert(claudeJson.mcpServers?.user_one, 'uninstall dropped user mcpServers.user_one from .claude.json');
+  assert(!claudeJson.mcpServers?.['project-rules'], 'uninstall left rac mcpServers.project-rules in .claude.json');
+
+  // ~/.claude/settings.json: user deny preserved, RAC deny entries gone
+  const claudeSettings = JSON.parse(await readFile(path.join(userHome, '.claude', 'settings.json'), 'utf8'));
+  assert(claudeSettings.permissions?.deny?.includes('Bash(rm -rf /)'), 'uninstall dropped user deny entry from .claude/settings.json');
+  assert(!claudeSettings.permissions?.deny?.some((e) => e.startsWith('Bash(git push')), 'uninstall left rac git push deny entry in .claude/settings.json');
+
+  // $XDG_CONFIG_HOME/opencode/opencode.jsonc: user keys preserved, RAC entries gone
+  const opencodeRaw = await readFile(path.join(xdgConfig, 'opencode', 'opencode.jsonc'), 'utf8');
+  const opencodeJson = JSON.parse(opencodeRaw.replace(/^\/\/.*\n/, ''));
+  assert(opencodeJson.theme === 'opencode-dark', 'uninstall dropped user theme from opencode.jsonc');
+  assert(opencodeJson.mcp?.user_oc_mcp, 'uninstall dropped user mcp.user_oc_mcp from opencode.jsonc');
+  assert(!opencodeJson.mcp?.['project-rules'], 'uninstall left rac mcp.project-rules in opencode.jsonc');
+  assert(opencodeJson.permission?.bash?.['rm -rf /'] === 'deny', 'uninstall dropped user permission.bash entry from opencode.jsonc');
+  assert(!Object.keys(opencodeJson.permission?.bash ?? {}).some((cmd) => cmd.startsWith('git push')), 'uninstall left rac permission.bash git push entry in opencode.jsonc');
+
+  // Manifests deleted
+  await assertAbsent(path.join(userHome, '.claude', '.rac-install-manifest.json'), '~/.claude/.rac-install-manifest.json');
+  await assertAbsent(path.join(userHome, '.codex', '.rac-install-manifest.json'), '~/.codex/.rac-install-manifest.json');
+  await assertAbsent(path.join(userHome, '.agents', '.rac-install-manifest.json'), '~/.agents/.rac-install-manifest.json');
+  await assertAbsent(path.join(xdgConfig, 'opencode', '.rac-install-manifest.json'), '$XDG_CONFIG_HOME/opencode/.rac-install-manifest.json');
+}
+
 async function assertMergePreservedUserKeys(userHome, xdgConfig) {
   const codexToml = parseToml(await readFile(path.join(userHome, '.codex', 'config.toml'), 'utf8'));
   assert(codexToml.approval_policy === 'on-failure', 'codex merge dropped user approval_policy');
@@ -198,6 +308,7 @@ async function main() {
     await checkCodexProject(sampleRepo);
     await checkClaudeProject(sampleRepo);
     await checkOpenCodeProject(sampleRepo);
+    await assertUninstallReverseProject(sampleRepo);
 
     await setupConfigTargetsScope(configTargetsRepo);
 
@@ -206,6 +317,17 @@ async function main() {
     await checkCodexUser(userScope);
     await checkClaudeUser(userScope);
     await checkOpenCodeUser(userScope);
+
+    // Use a separate isolated scope for uninstall checks: external vendor CLIs (e.g. claude mcp list)
+    // can rewrite shared files like .claude.json, losing user-seeded keys before we can verify them.
+    const userScopeUninstall = await setupUserScope(tmpRoot, { suffix: '-uninstall', preSeed: true });
+    await assertMergePreservedUserKeys(userScopeUninstall.userHome, userScopeUninstall.xdgConfig);
+    await assertUninstallPreservesUserScope(
+      userScopeUninstall.userHome,
+      userScopeUninstall.xdgConfig,
+      userScopeUninstall.cwd,
+      { ...process.env, RAC_HOME: userScopeUninstall.userHome, XDG_CONFIG_HOME: userScopeUninstall.xdgConfig }
+    );
 
     const userScopeNoMerge = await setupUserScope(tmpRoot, { suffix: '-nomerge', noMerge: true });
     await checkCodexUser(userScopeNoMerge);
