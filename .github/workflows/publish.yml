@@ -19,10 +19,14 @@ jobs:
           ref: main
           fetch-depth: 0
 
+      # Node 24 ships npm 11.x which handles OIDC trusted publishing correctly;
+      # Node 22's bundled npm 10.9.x silently falls back to token auth and 404s.
+      # registry-url is intentionally omitted: when set, setup-node writes an
+      # .npmrc that npm prioritizes over OIDC, skipping the trusted-publisher
+      # handshake (npm/cli#8730).
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
-          registry-url: 'https://registry.npmjs.org'
+          node-version: '24'
           cache: npm
 
       - run: npm ci
