@@ -2,10 +2,10 @@ import { mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { parse as parseToml } from 'smol-toml';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { addProjectPack, listProjectPacks, removeProjectPack } from '../src/core/pack-config.js';
-import { loadAgents, loadInstallSettings, loadMcps, loadProjectPackConfig, loadRules, loadSkills, loadVendorConfigs } from '../src/core/parsers.js';
+import { loadAgents, loadInstallSettings, loadMcps, loadProjectPackConfig, loadRules, loadSkills, loadVendorConfigs, resolvePacks, type GitRunner } from '../src/core/parsers.js';
 
 import { cleanupTmpDirs, makeTmp, runCliInProcess } from './helpers.js';
 
@@ -405,5 +405,154 @@ describe('parsers', () => {
 
     const skills = await loadSkills(path.join(root, '.rac'), 'project');
     expect(skills[0].assets).toEqual([]);
+  });
+});
+
+describe('resolvePacks with overrides', () => {
+  function neverGit(): GitRunner {
+    return vi.fn().mockImplementation(async () => {
+      throw new Error('git should not be called for overridden packs');
+    }) as unknown as GitRunner;
+  }
+
+  async function makeLocalPack(dir: string): Promise<void> {
+    await mkdir(path.join(dir, '.rac'), { recursive: true });
+    await writeFile(path.join(dir, '.rac/config.toml'), '', 'utf8');
+  }
+
+  it('matching [[pack_overrides]] returns PackRuntime with override.path set; gitRunner never called', async () => {
+    const project = await makeTmp();
+    const packDir = await makeTmp();
+    await mkdir(path.join(project, '.rac'), { recursive: true });
+    await writeFile(
+      path.join(project, '.rac/config.toml'),
+      '[[packs]]\nid = "alpha"\nrepo = "github:owner/alpha"\nref = "main"\n',
+      'utf8'
+    );
+    await writeFile(
+      path.join(project, '.rac/config.local.toml'),
+      `[[pack_overrides]]\nid = "alpha"\npath = ${JSON.stringify(packDir)}\n`,
+      'utf8'
+    );
+    await makeLocalPack(packDir);
+
+    const gitRunner = neverGit();
+    const result = await resolvePacks(project, { gitRunner });
+
+    expect(result).toHaveLength(2);
+    const alpha = result.find((r) => r.id === 'alpha');
+    expect(alpha?.override?.path).toBe(packDir);
+    expect(alpha?.root).toBe(path.join(packDir, '.rac'));
+    expect(alpha?.sourceRepo).toBe('github:owner/alpha');
+    expect(alpha?.sourceRef).toBe('main');
+    expect(gitRunner).not.toHaveBeenCalled();
+  });
+
+  it('[[pack_overrides]] id not matching any [[packs]] entry throws with "pack override target not found"', async () => {
+    const project = await makeTmp();
+    await mkdir(path.join(project, '.rac'), { recursive: true });
+    await writeFile(
+      path.join(project, '.rac/config.toml'),
+      '[[packs]]\nid = "alpha"\nrepo = "github:owner/alpha"\nref = "main"\n',
+      'utf8'
+    );
+    await writeFile(
+      path.join(project, '.rac/config.local.toml'),
+      '[[pack_overrides]]\nid = "nonexistent"\npath = "/some/path"\n',
+      'utf8'
+    );
+
+    await expect(resolvePacks(project, { gitRunner: neverGit() }))
+      .rejects.toThrow(/pack override target not found/);
+    await expect(resolvePacks(project, { gitRunner: neverGit() }))
+      .rejects.toThrow(/nonexistent/);
+  });
+
+  it('mixed: pack A overridden locally, pack B fetched via gitRunner; mock only called for B', async () => {
+    const project = await makeTmp();
+    const cacheDir = await makeTmp();
+    const packADir = await makeTmp();
+    await mkdir(path.join(project, '.rac'), { recursive: true });
+    await writeFile(
+      path.join(project, '.rac/config.toml'),
+      '[[packs]]\nid = "a"\nrepo = "github:owner/a"\nref = "main"\n\n[[packs]]\nid = "b"\nrepo = "github:owner/b"\nref = "main"\n',
+      'utf8'
+    );
+    await writeFile(
+      path.join(project, '.rac/config.local.toml'),
+      `[[pack_overrides]]\nid = "a"\npath = ${JSON.stringify(packADir)}\n`,
+      'utf8'
+    );
+    await makeLocalPack(packADir);
+
+    // Set up a fake cache dir so git calls "succeed" by pointing at a valid pack dir
+    const originalCacheDir = process.env.RAC_CACHE_DIR;
+    process.env.RAC_CACHE_DIR = cacheDir;
+    try {
+      // Create a fake cached repo for pack B
+      const key = 'github:owner/b@main';
+      const keyHash = Buffer.from(key).toString('base64url');
+      const repoDir = path.join(cacheDir, 'packs', keyHash);
+      await mkdir(path.join(repoDir, '.git'), { recursive: true });
+      await mkdir(path.join(repoDir, '.rac'), { recursive: true });
+      await writeFile(path.join(repoDir, '.rac/config.toml'), '', 'utf8');
+
+      const gitCalls: string[][] = [];
+      const gitRunner: GitRunner = vi.fn().mockImplementation(async (args: string[]) => {
+        gitCalls.push(args);
+        // fetch and checkout succeed silently
+      });
+
+      const result = await resolvePacks(project, { gitRunner });
+
+      expect(result).toHaveLength(3); // project + a + b
+      const a = result.find((r) => r.id === 'a');
+      const b = result.find((r) => r.id === 'b');
+      expect(a?.override?.path).toBe(packADir);
+      expect(b?.override).toBeUndefined();
+
+      // git should have been called for B only (fetch + checkout = at least 1 call)
+      expect(gitCalls.length).toBeGreaterThan(0);
+      // None of the git calls should mention pack A's path
+      for (const call of gitCalls) {
+        expect(call.join(' ')).not.toContain('owner/a');
+      }
+    } finally {
+      process.env.RAC_CACHE_DIR = originalCacheDir;
+    }
+  });
+
+  it('no overrides: existing behavior unchanged (project + shared packs via gitRunner)', async () => {
+    const project = await makeTmp();
+    const cacheDir = await makeTmp();
+    await mkdir(path.join(project, '.rac'), { recursive: true });
+    await writeFile(
+      path.join(project, '.rac/config.toml'),
+      '[[packs]]\nid = "alpha"\nrepo = "github:owner/alpha"\nref = "main"\n',
+      'utf8'
+    );
+    // No config.local.toml
+
+    const originalCacheDir = process.env.RAC_CACHE_DIR;
+    process.env.RAC_CACHE_DIR = cacheDir;
+    try {
+      const key = 'github:owner/alpha@main';
+      const keyHash = Buffer.from(key).toString('base64url');
+      const repoDir = path.join(cacheDir, 'packs', keyHash);
+      await mkdir(path.join(repoDir, '.git'), { recursive: true });
+      await mkdir(path.join(repoDir, '.rac'), { recursive: true });
+      await writeFile(path.join(repoDir, '.rac/config.toml'), '', 'utf8');
+
+      const gitRunner: GitRunner = vi.fn().mockImplementation(async () => { /* success */ });
+
+      const result = await resolvePacks(project, { gitRunner });
+
+      expect(result).toHaveLength(2);
+      const alpha = result.find((r) => r.id === 'alpha');
+      expect(alpha?.override).toBeUndefined();
+      expect(gitRunner).toHaveBeenCalled();
+    } finally {
+      process.env.RAC_CACHE_DIR = originalCacheDir;
+    }
   });
 });

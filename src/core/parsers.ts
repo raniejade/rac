@@ -380,6 +380,40 @@ export async function loadSharedPackConfig(root: string): Promise<void> {
   if (parsed.packs !== undefined) throw new Error(`shared pack config cannot contain [[packs]]: ${configPath}`);
 }
 
+export async function ensureLocalPack(
+  spec: PackSpec,
+  overridePath: string,
+  projectRoot: string,
+): Promise<PackRuntime> {
+  const projectCwd = path.dirname(projectRoot);
+  const resolved = path.isAbsolute(overridePath) ? overridePath : path.resolve(projectCwd, overridePath);
+
+  let dirStat: Awaited<ReturnType<typeof stat>>;
+  try {
+    dirStat = await stat(resolved);
+  } catch {
+    throw new Error(`pack override path does not exist: ${spec.id} → ${resolved}`);
+  }
+  if (!dirStat.isDirectory()) throw new Error(`pack override path is not a directory: ${spec.id} → ${resolved}`);
+
+  const innerConfig = path.join(resolved, '.rac', 'config.toml');
+  try {
+    await stat(innerConfig);
+  } catch {
+    throw new Error(`pack override path missing .rac/config.toml: ${spec.id} → ${resolved} (expected ${innerConfig})`);
+  }
+
+  await loadSharedPackConfig(path.join(resolved, '.rac'));
+
+  return {
+    id: spec.id,
+    root: path.join(resolved, '.rac'),
+    sourceRepo: spec.repo,
+    sourceRef: spec.ref,
+    override: { path: resolved },
+  };
+}
+
 export async function resolvePacks(
   cwd: string,
   opts: { refresh?: boolean; gitRunner?: GitRunner } = {},
@@ -389,8 +423,26 @@ export async function resolvePacks(
   try { await stat(configPath); } catch { throw new Error(`missing required config: ${configPath}`); }
 
   const project = await loadProjectPackConfig(projectRoot);
+  const overrides = await loadPackOverrides(projectRoot);
+
+  const overrideMap = new Map<string, PackOverride>();
+  for (const ov of overrides) overrideMap.set(ov.id, ov);
+
+  const localConfigPath = path.join(projectRoot, 'config.local.toml');
+  for (const ov of overrides) {
+    const found = project.packs.some((p) => p.id === ov.id);
+    if (!found) throw new Error(`pack override target not found: ${ov.id} (no matching [[packs]] entry in ${localConfigPath})`);
+  }
+
   const out: PackRuntime[] = [{ id: 'project', root: projectRoot }];
-  for (const spec of project.packs) out.push(await ensureSharedPack(spec, opts));
+  for (const spec of project.packs) {
+    const ov = overrideMap.get(spec.id);
+    if (ov) {
+      out.push(await ensureLocalPack(spec, ov.path, projectRoot));
+    } else {
+      out.push(await ensureSharedPack(spec, opts));
+    }
+  }
   return out;
 }
 
