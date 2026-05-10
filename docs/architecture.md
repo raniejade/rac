@@ -146,6 +146,10 @@ Safety model:
 
 This keeps write policy centralized and consistent across all vendors.
 
+### Uninstall
+
+`uninstall()` reverses install by reading every per-target install manifest on disk and grouping records by output `relPath`. Whole-file outputs are unlinked. Shared config files (`.claude/settings.json`, `.mcp.json`, `.codex/config.toml`, `.opencode/opencode.jsonc`, etc.) are pruned by re-running the same merge strategies install uses, but with `phase: 'clean'` and `nextRecords: []`. Empty shared files are left in place; manifests are deleted only when their records array empties. Files are written before manifests so a re-run can recover from partial failure.
+
 ## Ownership Boundaries Summary
 
 - `parsers.ts`: file discovery + schema validation only

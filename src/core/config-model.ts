@@ -2,8 +2,9 @@ import crypto from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { parseSelector, pathsOverlap } from './selector.js';
 import type { AgentDef, Kind, McpDef, Pack, RuleDecision, RuleDef, SkillDef, Target, VendorConfigDef } from './types.js';
-import { assertNoTraversal, bracketSelectorPath, expandRulePattern, rel, selectorPathsOverlap } from './util.js';
+import { assertNoTraversal, expandRulePattern, rel } from './util.js';
 
 export type WarningSeverity = 'error' | 'warn' | 'info';
 
@@ -166,9 +167,9 @@ function assertNoConfigSelectorOverlap(configs: VendorConfigDef[]): void {
   const seen: Array<{ selector: string; path: string[]; owner: string; target: Target }> = [];
   for (const config of configs) {
     for (const selector of config.selectors) {
-      const current = { selector, path: bracketSelectorPath(selector), owner: `${config.pack}:${config.sourceName}`, target: config.target };
+      const current = { selector, path: parseSelector(selector), owner: `${config.pack}:${config.sourceName}`, target: config.target };
       for (const prior of seen) {
-        if (prior.target === current.target && selectorPathsOverlap(prior.path, current.path)) {
+        if (prior.target === current.target && pathsOverlap(prior.path, current.path)) {
           throw new Error(`vendor config selector overlap for ${current.target}: ${prior.selector} from ${prior.owner} conflicts with ${current.selector} from ${current.owner}`);
         }
       }

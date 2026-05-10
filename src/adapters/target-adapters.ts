@@ -3,9 +3,10 @@ import path from 'node:path';
 import { stringify as stringifyToml } from 'smol-toml';
 
 import type { RuntimeConfig, SkillAssetConfig } from '../core/config-model.js';
+import { parseCodexTomlSelector, parseSelector, pathsOverlap } from '../core/selector.js';
 import { renderVendorTemplate } from '../core/template.js';
 import type { Kind, ManagedInventoryEntry, Pack, Scope, Target } from '../core/types.js';
-import { expandRulePattern, jsonPathBracketSelector, MANAGED_JSONC_WARNING, MANAGED_TOML_WARNING, selectorPath, selectorPathsOverlap, sha256, tomlQuotedKeySegment } from '../core/util.js';
+import { expandRulePattern, jsonPathBracketSelector, MANAGED_JSONC_WARNING, MANAGED_TOML_WARNING, sha256, tomlQuotedKeySegment } from '../core/util.js';
 
 import { textManagedPayload } from './shared.js';
 
@@ -86,11 +87,17 @@ function expandedCommandEntry(command: string[], appendWildcard: boolean): strin
 
 function assertNoSelectorConflicts(configSelectors: string[], generatedSelectors: string[], context: string): void {
   if (configSelectors.length === 0) return;
-  const configPaths = configSelectors.map((selector) => ({ selector, path: selectorPath(selector) }));
-  const generatedPaths = generatedSelectors.map((selector) => ({ selector, path: selectorPath(selector) }));
+  const configPaths = configSelectors.map((selector) => ({
+    selector,
+    path: selector.startsWith('$') ? parseSelector(selector) : parseCodexTomlSelector(selector)
+  }));
+  const generatedPaths = generatedSelectors.map((selector) => ({
+    selector,
+    path: selector.startsWith('$') ? parseSelector(selector) : parseCodexTomlSelector(selector)
+  }));
   for (const configSelector of configPaths) {
     for (const generatedSelector of generatedPaths) {
-      if (selectorPathsOverlap(configSelector.path, generatedSelector.path)) {
+      if (pathsOverlap(configSelector.path, generatedSelector.path)) {
         throw new Error(`${context} selector conflict: ${configSelector.selector} overlaps generated ${generatedSelector.selector}`);
       }
     }

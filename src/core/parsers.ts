@@ -7,8 +7,9 @@ import fg from 'fast-glob';
 import { parse } from 'smol-toml';
 import { z } from 'zod';
 
+import { parseSelector, pathsOverlap } from './selector.js';
 import type { AgentDef, McpDef, PackRuntime, PackSpec, RuleCommandItem, RuleDecision, RuleDef, SkillDef, Target, VendorConfigDef } from './types.js';
-import { asRecord, bracketSelectorPath, collectEnvVarsFromText, jsonPathBracketSelector, normalizeDefinitionId, selectorPathsOverlap } from './util.js';
+import { asRecord, collectEnvVarsFromText, jsonPathBracketSelector, normalizeDefinitionId } from './util.js';
 
 const PACK_ID_RE = /^[A-Za-z0-9._-]+$/;
 const GITHUB_REPO_RE = /^github:([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)$/;
@@ -192,10 +193,10 @@ function flattenConfigLeaves(value: Record<string, unknown>, prefix: string[] = 
 }
 
 function assertNoSelectorOverlap(selectors: string[], context: string): void {
-  const parsed = selectors.map((selector) => ({ selector, path: bracketSelectorPath(selector) }));
+  const parsed = selectors.map((selector) => ({ selector, path: parseSelector(selector) }));
   for (let i = 0; i < parsed.length; i += 1) {
     for (let j = i + 1; j < parsed.length; j += 1) {
-      if (selectorPathsOverlap(parsed[i].path, parsed[j].path)) throw new Error(`${context} selector overlap: ${parsed[i].selector} conflicts with ${parsed[j].selector}`);
+      if (pathsOverlap(parsed[i].path, parsed[j].path)) throw new Error(`${context} selector overlap: ${parsed[i].selector} conflicts with ${parsed[j].selector}`);
     }
   }
 }

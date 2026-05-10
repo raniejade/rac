@@ -1,12 +1,15 @@
 #!/usr/bin/env node
+import { createInterface } from 'node:readline/promises';
+
 import { Command, InvalidArgumentError } from 'commander';
 
 import pkg from '../package.json' with { type: 'json' };
 
-import { detectColorMode, renderDoctor, renderEmpty, renderInstall, renderList, renderSuccess, startSpinner } from './cli/output/index.js';
+import { detectColorMode, renderDoctor, renderEmpty, renderInstall, renderList, renderSuccess, renderUninstall, startSpinner } from './cli/output/index.js';
 import { doctor, initProject, install } from './core/install.js';
 import { addProjectPack, listProjectPacks, removeProjectPack } from './core/pack-config.js';
 import type { Kind, Scope, Target } from './core/types.js';
+import { uninstall } from './core/uninstall.js';
 import { splitCsv } from './core/util.js';
 
 const TARGET_VALUES = ['claude', 'codex', 'opencode'] as const;
@@ -36,119 +39,202 @@ function normalizeScope(value: string | undefined): Scope {
   return value as Scope;
 }
 
-const program = new Command();
-program
-  .name('rac')
-  .description('Install RAC project definitions into Claude/Codex/OpenCode config surfaces')
-  .showHelpAfterError()
-  .configureOutput({ outputError: (str, write) => write(str) })
-  .exitOverride((error) => {
-    if (error.code === 'commander.helpDisplayed') process.exit(0);
-    if (error.code === 'commander.version') process.exit(0);
-    if (error.code?.startsWith('commander.')) process.exit(2);
+export function createProgram(): Command {
+  const program = new Command();
+  program
+    .name('rac')
+    .description('Install RAC project definitions into Claude/Codex/OpenCode config surfaces')
+    .showHelpAfterError()
+    .configureOutput({ outputError: (str, write) => write(str) })
+    .exitOverride()
+    .option('-p, --plain', 'disable color/styling output')
+    .version(pkg.version, '-v, --version', 'output the current version');
+
+  program.command('init')
+    .description('Initialize .rac source tree with starter reviewer + project-gates + project-rules + wrapper-deny rule definitions')
+    .option('--empty', 'create folders only without starter examples')
+    .option('--scope <scope>', 'project|user (default project)')
+    .action(async (opts: { empty?: boolean; scope?: string }) => {
+      const mode = detectColorMode({ plainFlag: !!(program.opts() as { plain?: boolean }).plain });
+      await initProject(process.cwd(), !!opts.empty, normalizeScope(opts.scope));
+      process.stdout.write(renderSuccess(`Initialized .rac (${normalizeScope(opts.scope)} scope)`, mode));
+    });
+
+  program.command('install')
+    .description('Install selected kinds/targets from .rac definitions')
+    .option('--targets <targets>', 'comma-separated: claude,codex,opencode')
+    .option('--kind <kinds>', 'comma-separated: agent,skill,mcp,rule,config')
+    .option('--dry-run', 'print planned changes only')
+    .option('--clean', 'delete stale files tracked by manifest for selected kind/target')
+    .option('--check', 'verify generated outputs/manifests are up to date without writing')
+    .option('--force', 'override unmanaged files')
+    .option('--refresh-packs', 'force re-clone of shared pack caches before installing')
+    .option('--scope <scope>', 'project|user (default project)')
+    .option('--no-merge', 'bypass surgical merge of shared config files; write generated content wholesale')
+    .action(async (opts: { targets?: string; kind?: string; dryRun?: boolean; clean?: boolean; check?: boolean; force?: boolean; refreshPacks?: boolean; scope?: string; noMerge?: boolean }) => {
+      const mode = detectColorMode({ plainFlag: !!(program.opts() as { plain?: boolean }).plain });
+      const spinner = startSpinner('Installing…', mode);
+      try {
+        const result = await install({
+          targets: normalizeTargets(opts.targets),
+          kinds: normalizeKinds(opts.kind),
+          dryRun: !!opts.dryRun,
+          clean: !!opts.clean,
+          check: !!opts.check,
+          force: !!opts.force,
+          refreshPacks: !!opts.refreshPacks,
+          scope: normalizeScope(opts.scope),
+          noMerge: opts.noMerge ? true : undefined,
+          cwd: process.cwd()
+        });
+        spinner.stop();
+        process.stdout.write(renderInstall(result, {
+          cwd: process.cwd(),
+          mode,
+          check: !!opts.check,
+          dryRun: !!opts.dryRun
+        }));
+      } catch (err) {
+        spinner.stop();
+        throw err;
+      }
+    });
+
+  program.command('uninstall')
+    .description('Remove all RAC-managed files and selectors for selected scope/targets/kinds')
+    .option('--targets <targets>', 'comma-separated: claude,codex,opencode')
+    .option('--kind <kinds>', 'comma-separated: agent,skill,mcp,rule,config')
+    .option('--dry-run', 'print planned changes only')
+    .option('--scope <scope>', 'project|user (default project)')
+    .option('--yes', 'skip confirmation prompt')
+    .action(async (opts: { targets?: string; kind?: string; dryRun?: boolean; scope?: string; yes?: boolean }) => {
+      const cwd = process.cwd();
+      const mode = detectColorMode({ plainFlag: !!(program.opts() as { plain?: boolean }).plain });
+      const targets = normalizeTargets(opts.targets);
+      const kinds = opts.kind !== undefined ? normalizeKinds(opts.kind) : undefined;
+      const scope = normalizeScope(opts.scope);
+
+      // Compute the plan (dry-run first to show what would change)
+      const plan = await uninstall({ cwd, targets, kinds, scope, dryRun: true });
+      process.stdout.write(renderUninstall(plan, { cwd, mode, dryRun: !!opts.dryRun }));
+
+      if (opts.dryRun) return;
+      if (plan.changes.length === 0) return;
+
+      if (!opts.yes) {
+        let ans: string;
+        if (process.stdin.isTTY) {
+          const rl = createInterface({ input: process.stdin, output: process.stdout });
+          try {
+            ans = (await rl.question('Proceed with uninstall? [y/N] ')).trim().toLowerCase();
+          } finally {
+            rl.close();
+          }
+        } else {
+          // Non-TTY: attempt to read one line from stdin (supports piped 'y\n').
+          // Returns null if stdin is empty/closed immediately.
+          const line = await new Promise<string | null>((resolve) => {
+            let buf = '';
+            const onData = (chunk: Buffer | string) => {
+              buf += chunk.toString();
+              const nl = buf.indexOf('\n');
+              if (nl !== -1) {
+                process.stdin.off('data', onData);
+                process.stdin.off('close', onClose);
+                resolve(buf.slice(0, nl));
+              }
+            };
+            const onClose = () => {
+              process.stdin.off('data', onData);
+              resolve(buf.trim().length > 0 ? buf.trim() : null);
+            };
+            process.stdin.on('data', onData);
+            process.stdin.on('close', onClose);
+            process.stdin.resume();
+          });
+          if (line === null) {
+            process.stderr.write('cannot confirm in non-interactive mode; pass --yes\n');
+            process.exitCode = 1;
+            return;
+          }
+          ans = line.trim().toLowerCase();
+        }
+        if (ans !== 'y' && ans !== 'yes') {
+          process.stdout.write('Aborted.\n');
+          return;
+        }
+      }
+
+      // Apply the uninstall
+      const result = await uninstall({ cwd, targets, kinds, scope, dryRun: false });
+      process.stdout.write(`Uninstalled ${result.changes.length} change(s).\n`);
+    });
+
+  program.command('doctor')
+    .description('Validate definitions and print warnings')
+    .option('--targets <targets>', 'comma-separated: claude,codex,opencode')
+    .option('--kind <kinds>', 'comma-separated: agent,skill,mcp,rule,config')
+    .option('--scope <scope>', 'project|user (default project)')
+    .action(async (opts: { targets?: string; kind?: string; scope?: string }) => {
+      const mode = detectColorMode({ plainFlag: !!(program.opts() as { plain?: boolean }).plain });
+      const warnings = await doctor(process.cwd(), normalizeTargets(opts.targets), normalizeKinds(opts.kind), normalizeScope(opts.scope));
+      process.stdout.write(renderDoctor(warnings, mode));
+      if (warnings.some((w) => w.severity === 'error')) process.exit(1);
+    });
+
+  const packProgram = program.command('pack')
+    .description('Manage top-level [[packs]] entries in .rac/config.toml');
+
+  packProgram.command('add')
+    .description('Add a shared pack reference to .rac/config.toml')
+    .argument('<id>')
+    .argument('<repo>')
+    .requiredOption('--ref <ref>')
+    .action(async (id: string, repo: string, opts: { ref: string }) => {
+      const mode = detectColorMode({ plainFlag: !!(program.opts() as { plain?: boolean }).plain });
+      await addProjectPack(process.cwd(), { id, repo, ref: opts.ref });
+      process.stdout.write(renderSuccess(`Added pack ${id}`, mode));
+    });
+
+  packProgram.command('list')
+    .description('List configured shared packs')
+    .action(async () => {
+      const mode = detectColorMode({ plainFlag: !!(program.opts() as { plain?: boolean }).plain });
+      const packs = await listProjectPacks(process.cwd());
+      if (packs.length === 0) {
+        process.stdout.write(renderEmpty('No packs configured.', mode));
+      } else {
+        process.stdout.write(renderList(packs.map((p) => ({ left: p.id, right: `${p.repo} @ ${p.ref}` })), mode));
+      }
+    });
+
+  packProgram.command('remove')
+    .description('Remove a shared pack reference by id')
+    .argument('<id>')
+    .action(async (id: string) => {
+      const mode = detectColorMode({ plainFlag: !!(program.opts() as { plain?: boolean }).plain });
+      await removeProjectPack(process.cwd(), id);
+      process.stdout.write(renderSuccess(`Removed pack ${id}`, mode));
+    });
+
+  return program;
+}
+
+async function main() {
+  const program = createProgram();
+  try {
+    await program.parseAsync(process.argv);
+  } catch (err: unknown) {
+    const e = err as Record<string, unknown>;
+    if (e?.code === 'commander.helpDisplayed' || e?.code === 'commander.version') process.exit(0);
+    if (typeof e?.code === 'string' && e.code.startsWith('commander.')) process.exit(2);
+    if (typeof e?.exitCode === 'number') process.exit(e.exitCode);
+    if (err instanceof Error) process.stderr.write(`${err.message}\n`);
     process.exit(1);
-  })
-  .option('-p, --plain', 'disable color/styling output')
-  .version(pkg.version, '-v, --version', 'output the current version');
+  }
+}
 
-program.command('init')
-  .description('Initialize .rac source tree with starter reviewer + project-gates + project-rules + wrapper-deny rule definitions')
-  .option('--empty', 'create folders only without starter examples')
-  .option('--scope <scope>', 'project|user (default project)')
-  .action(async (opts: { empty?: boolean; scope?: string }) => {
-    const mode = detectColorMode({ plainFlag: !!(program.opts() as { plain?: boolean }).plain });
-    await initProject(process.cwd(), !!opts.empty, normalizeScope(opts.scope));
-    process.stdout.write(renderSuccess(`Initialized .rac (${normalizeScope(opts.scope)} scope)`, mode));
-  });
-
-program.command('install')
-  .description('Install selected kinds/targets from .rac definitions')
-  .option('--targets <targets>', 'comma-separated: claude,codex,opencode')
-  .option('--kind <kinds>', 'comma-separated: agent,skill,mcp,rule,config')
-  .option('--dry-run', 'print planned changes only')
-  .option('--clean', 'delete stale files tracked by manifest for selected kind/target')
-  .option('--check', 'verify generated outputs/manifests are up to date without writing')
-  .option('--force', 'override unmanaged files')
-  .option('--refresh-packs', 'force re-clone of shared pack caches before installing')
-  .option('--scope <scope>', 'project|user (default project)')
-  .option('--no-merge', 'bypass surgical merge of shared config files; write generated content wholesale')
-  .action(async (opts: { targets?: string; kind?: string; dryRun?: boolean; clean?: boolean; check?: boolean; force?: boolean; refreshPacks?: boolean; scope?: string; noMerge?: boolean }) => {
-    const mode = detectColorMode({ plainFlag: !!(program.opts() as { plain?: boolean }).plain });
-    const spinner = startSpinner('Installing…', mode);
-    try {
-      const result = await install({
-        targets: normalizeTargets(opts.targets),
-        kinds: normalizeKinds(opts.kind),
-        dryRun: !!opts.dryRun,
-        clean: !!opts.clean,
-        check: !!opts.check,
-        force: !!opts.force,
-        refreshPacks: !!opts.refreshPacks,
-        scope: normalizeScope(opts.scope),
-        noMerge: opts.noMerge ? true : undefined,
-        cwd: process.cwd()
-      });
-      spinner.stop();
-      process.stdout.write(renderInstall(result, {
-        cwd: process.cwd(),
-        mode,
-        check: !!opts.check,
-        dryRun: !!opts.dryRun
-      }));
-    } catch (err) {
-      spinner.stop();
-      throw err;
-    }
-  });
-
-program.command('doctor')
-  .description('Validate definitions and print warnings')
-  .option('--targets <targets>', 'comma-separated: claude,codex,opencode')
-  .option('--kind <kinds>', 'comma-separated: agent,skill,mcp,rule,config')
-  .option('--scope <scope>', 'project|user (default project)')
-  .action(async (opts: { targets?: string; kind?: string; scope?: string }) => {
-    const mode = detectColorMode({ plainFlag: !!(program.opts() as { plain?: boolean }).plain });
-    const warnings = await doctor(process.cwd(), normalizeTargets(opts.targets), normalizeKinds(opts.kind), normalizeScope(opts.scope));
-    process.stdout.write(renderDoctor(warnings, mode));
-    if (warnings.some((w) => w.severity === 'error')) process.exit(1);
-  });
-
-const packProgram = program.command('pack')
-  .description('Manage top-level [[packs]] entries in .rac/config.toml');
-
-packProgram.command('add')
-  .description('Add a shared pack reference to .rac/config.toml')
-  .argument('<id>')
-  .argument('<repo>')
-  .requiredOption('--ref <ref>')
-  .action(async (id: string, repo: string, opts: { ref: string }) => {
-    const mode = detectColorMode({ plainFlag: !!(program.opts() as { plain?: boolean }).plain });
-    await addProjectPack(process.cwd(), { id, repo, ref: opts.ref });
-    process.stdout.write(renderSuccess(`Added pack ${id}`, mode));
-  });
-
-packProgram.command('list')
-  .description('List configured shared packs')
-  .action(async () => {
-    const mode = detectColorMode({ plainFlag: !!(program.opts() as { plain?: boolean }).plain });
-    const packs = await listProjectPacks(process.cwd());
-    if (packs.length === 0) {
-      process.stdout.write(renderEmpty('No packs configured.', mode));
-    } else {
-      process.stdout.write(renderList(packs.map((p) => ({ left: p.id, right: `${p.repo} @ ${p.ref}` })), mode));
-    }
-  });
-
-packProgram.command('remove')
-  .description('Remove a shared pack reference by id')
-  .argument('<id>')
-  .action(async (id: string) => {
-    const mode = detectColorMode({ plainFlag: !!(program.opts() as { plain?: boolean }).plain });
-    await removeProjectPack(process.cwd(), id);
-    process.stdout.write(renderSuccess(`Removed pack ${id}`, mode));
-  });
-
-program.parseAsync(process.argv).catch((error) => {
-  console.error(String(error?.message || error));
-  process.exit(1);
-});
+// Only invoke main() when run as a script (not when imported as a module)
+if (process.argv[1]?.endsWith('cli.js') || process.argv[1]?.endsWith('cli.ts')) {
+  await main();
+}

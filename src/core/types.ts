@@ -142,3 +142,24 @@ export type PackRuntime = {
   sourceRepo?: string;
   sourceRef?: string;
 };
+
+export type UninstallOptions = {
+  cwd: string;
+  scope?: Scope;
+  targets?: Target[];
+  kinds?: Kind[];
+  dryRun?: boolean;
+  yes?: boolean;
+};
+
+export type UninstallChange =
+  | { action: 'delete-file'; target: Target; kind: Kind; pack: string; id: string; relPath: string; absPath: string }
+  | { action: 'prune-selector'; target: Target; kind: Kind; pack: string; id: string; relPath: string; absPath: string; selector: string }
+  | { action: 'delete-manifest'; target: Target; manifestRelPath: string; absPath: string };
+
+export type UninstallResult = {
+  changes: UninstallChange[];
+  deletedFiles: string[];
+  prunedSelectors: Array<{ absPath: string; selector: string }>;
+  deletedManifests: string[];
+};

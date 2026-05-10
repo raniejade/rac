@@ -5,14 +5,11 @@ import { describe, expect, it } from 'vitest';
 import {
   asRecord,
   assertNoTraversal,
-  bracketSelectorPath,
   collectEnvVarsFromText,
   expandRulePattern,
   jsonPathBracketSelector,
   rel,
   resolveContainedPath,
-  selectorPath,
-  selectorPathsOverlap,
   sha256,
   splitCsv,
   tomlQuotedKeySegment
@@ -155,53 +152,6 @@ describe('collectEnvVarsFromText', () => {
 
   it('ignores bare dollar vars without braces', () => {
     expect(collectEnvVarsFromText('$FOO')).toEqual([]);
-  });
-});
-
-describe('bracketSelectorPath', () => {
-  it('parses multi-segment bracket form', () => {
-    expect(bracketSelectorPath('$["a"]["b"]')).toEqual(['a', 'b']);
-  });
-
-  it('non-bracket form returns selector as-is in array', () => {
-    expect(bracketSelectorPath('$.a.b')).toEqual(['$.a.b']);
-  });
-});
-
-describe('selectorPath', () => {
-  it('parses bracket form', () => {
-    expect(selectorPath('$["a"]["b"]')).toEqual(['a', 'b']);
-  });
-
-  it('parses dot form', () => {
-    expect(selectorPath('$.a.b')).toEqual(['a', 'b']);
-  });
-
-  it('parses quoted segment form', () => {
-    expect(selectorPath('"foo"."bar"')).toEqual(['foo', 'bar']);
-  });
-
-  it('malformed bracket form returns selector as-is in array', () => {
-    // Unterminated bracket: selector starting with $ but malformed brackets
-    expect(selectorPath('$["unclosed')).toEqual(['$["unclosed']);
-  });
-});
-
-describe('selectorPathsOverlap', () => {
-  it('overlapping prefix returns true', () => {
-    expect(selectorPathsOverlap(['a', 'b'], ['a', 'b', 'c'])).toBe(true);
-  });
-
-  it('divergent prefix returns false', () => {
-    expect(selectorPathsOverlap(['a', 'x'], ['a', 'y'])).toBe(false);
-  });
-
-  it('identical paths return true', () => {
-    expect(selectorPathsOverlap(['a', 'b'], ['a', 'b'])).toBe(true);
-  });
-
-  it('one empty path returns true', () => {
-    expect(selectorPathsOverlap([], ['a', 'b'])).toBe(true);
   });
 });
 
