@@ -8,7 +8,7 @@ import pkg from '../package.json' with { type: 'json' };
 import { detectColorMode, renderDiff, renderDoctor, renderEmpty, renderInstall, renderList, renderSuccess, renderUninstall, startSpinner } from './cli/output/index.js';
 import { diff } from './core/diff.js';
 import { doctor, initProject, install } from './core/install.js';
-import { addProjectPack, listProjectPacks, removeProjectPack } from './core/pack-config.js';
+import { addProjectPack, clearProjectPackOverride, listProjectPackOverrides, listProjectPacks, removeProjectPack, setProjectPackOverride } from './core/pack-config.js';
 import type { Kind, Scope, Target } from './core/types.js';
 import { uninstall } from './core/uninstall.js';
 import { splitCsv } from './core/util.js';
@@ -255,10 +255,16 @@ export function createProgram(): Command {
     .action(async () => {
       const mode = detectColorMode({ plainFlag: !!(program.opts() as { plain?: boolean }).plain });
       const packs = await listProjectPacks(process.cwd());
+      const overrides = await listProjectPackOverrides(process.cwd());
+      const overrideById = new Map(overrides.map((o) => [o.id, o]));
       if (packs.length === 0) {
         process.stdout.write(renderEmpty('No packs configured.', mode));
       } else {
-        process.stdout.write(renderList(packs.map((p) => ({ left: p.id, right: `${p.repo} @ ${p.ref}` })), mode));
+        process.stdout.write(renderList(packs.map((p) => {
+          const ov = overrideById.get(p.id);
+          const right = `${p.repo} @ ${p.ref}` + (ov ? `  (override → ${ov.path})` : '');
+          return { left: p.id, right };
+        }), mode));
       }
     });
 
@@ -269,6 +275,24 @@ export function createProgram(): Command {
       const mode = detectColorMode({ plainFlag: !!(program.opts() as { plain?: boolean }).plain });
       await removeProjectPack(process.cwd(), id);
       process.stdout.write(renderSuccess(`Removed pack ${id}`, mode));
+    });
+
+  packProgram.command('override')
+    .description('Add, replace, or clear a local pack override (writes .rac/config.local.toml)')
+    .argument('<id>')
+    .argument('[path]', 'Local directory containing .rac/ (omit when using --clear)')
+    .option('--clear', 'Remove the override for <id>')
+    .action(async (id: string, pathArg: string | undefined, opts: { clear?: boolean }) => {
+      const mode = detectColorMode({ plainFlag: !!(program.opts() as { plain?: boolean }).plain });
+      if (opts.clear) {
+        if (pathArg !== undefined) throw new Error('cannot pass <path> together with --clear');
+        await clearProjectPackOverride(process.cwd(), id);
+        process.stdout.write(renderSuccess(`Cleared override for ${id}`, mode));
+        return;
+      }
+      if (!pathArg) throw new Error('missing <path> argument (use --clear to remove an override)');
+      await setProjectPackOverride(process.cwd(), id, pathArg);
+      process.stdout.write(renderSuccess(`Set override for ${id} → ${pathArg}`, mode));
     });
 
   return program;

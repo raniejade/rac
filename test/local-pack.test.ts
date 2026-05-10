@@ -1,20 +1,13 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
-import { ensureLocalPack, type GitRunner } from '../src/core/parsers.js';
+import { ensureLocalPack } from '../src/core/parsers.js';
 
 import { cleanupTmpDirs, makeTmp } from './helpers.js';
 
 afterEach(cleanupTmpDirs);
-
-/** A GitRunner that throws if invoked — proves git was bypassed for overridden packs. */
-function neverCallGit(): GitRunner {
-  return vi.fn().mockImplementation(async () => {
-    throw new Error('git should not be called for overridden packs');
-  }) as unknown as GitRunner;
-}
 
 async function makeLocalPack(root: string): Promise<void> {
   await mkdir(path.join(root, '.rac'), { recursive: true });
@@ -39,21 +32,6 @@ describe('ensureLocalPack', () => {
     expect(result.sourceRepo).toBe('github:owner/repo');
     expect(result.sourceRef).toBe('main');
     expect(result.override).toEqual({ path: packDir });
-  });
-
-  it('does not invoke GitRunner', async () => {
-    const projectDir = await makeTmp();
-    const packDir = await makeTmp();
-    await mkdir(path.join(projectDir, '.rac'), { recursive: true });
-    await writeFile(path.join(projectDir, '.rac/config.toml'), '', 'utf8');
-    await makeLocalPack(packDir);
-
-    const projectRoot = path.join(projectDir, '.rac');
-    const gitRunner = neverCallGit();
-
-    // Should not throw — if it did, the mock would produce "git should not be called"
-    await expect(ensureLocalPack(validSpec, packDir, projectRoot)).resolves.toBeDefined();
-    expect(gitRunner).not.toHaveBeenCalled();
   });
 
   it('relative overridePath resolves against project cwd (dir containing .rac/), not .rac/ itself', async () => {
