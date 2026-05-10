@@ -367,7 +367,6 @@ export async function loadPackOverrides(projectRoot: string): Promise<PackOverri
     const pathVal = row.path;
     if (pathVal === undefined) throw new Error(`missing pack_overrides.path for ${id} in ${configPath}`);
     if (typeof pathVal !== 'string' || !pathVal) throw new Error(`invalid pack_overrides.path for ${id} in ${configPath}; must be a non-empty string`);
-    if (pathVal.includes('\0')) throw new Error(`invalid pack_overrides.path for ${id} in ${configPath}; path must not contain NUL bytes`);
 
     out.push({ id, path: pathVal });
   }

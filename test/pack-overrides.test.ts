@@ -27,9 +27,16 @@ describe('loadPackOverrides', () => {
     expect(result).toEqual([]);
   });
 
-  it('empty pack_overrides array returns empty array', async () => {
+  it('file with no pack_overrides key returns empty array', async () => {
     const projectRoot = await makeProjectRoot();
     await writeLocalConfig(projectRoot, '');
+    const result = await loadPackOverrides(projectRoot);
+    expect(result).toEqual([]);
+  });
+
+  it('empty pack_overrides array returns empty array', async () => {
+    const projectRoot = await makeProjectRoot();
+    await writeLocalConfig(projectRoot, 'pack_overrides = []\n');
     const result = await loadPackOverrides(projectRoot);
     expect(result).toEqual([]);
   });
@@ -93,13 +100,13 @@ describe('loadPackOverrides', () => {
     await expect(loadPackOverrides(projectRoot)).rejects.toThrow('non-empty string');
   });
 
-  it('path with NUL byte throws', async () => {
+  it('path containing NUL bytes is rejected by TOML parser', async () => {
     const projectRoot = await makeProjectRoot();
     await writeFile(
       path.join(projectRoot, 'config.local.toml'),
       Buffer.from('[[pack_overrides]]\nid = "my-pack"\npath = "../foo\x00bar"\n', 'utf8')
     );
-    await expect(loadPackOverrides(projectRoot)).rejects.toThrow();
+    await expect(loadPackOverrides(projectRoot)).rejects.toThrow(/control characters|invalid TOML/i);
   });
 
   it('unknown top-level key throws naming the key', async () => {
