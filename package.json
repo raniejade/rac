@@ -2,6 +2,18 @@
   "name": "@raniejade/rac",
   "version": "0.2.1",
   "description": "Install RAC project definitions into Claude/Codex/OpenCode config surfaces",
+  "keywords": [
+    "claude",
+    "claude-code",
+    "codex",
+    "opencode",
+    "mcp",
+    "agent-config",
+    "agents",
+    "skills",
+    "cli",
+    "dotfiles"
+  ],
   "license": "MIT",
   "type": "module",
   "bin": {
