@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { parseSelector, pathsOverlap } from './selector.js';
 import type { AgentDef, Kind, McpDef, Pack, RuleDecision, RuleDef, SkillDef, Target, VendorConfigDef } from './types.js';
-import { assertNoTraversal, rel } from './util.js';
+import { assertNoTraversal, expandRulePattern, rel } from './util.js';
 
 export type WarningSeverity = 'error' | 'warn' | 'info';
 
@@ -176,16 +176,6 @@ function assertNoConfigSelectorOverlap(configs: VendorConfigDef[]): void {
       seen.push(current);
     }
   }
-}
-
-function expandRulePattern(pattern: Array<string | string[]>): string[][] {
-  return pattern
-    .map((segment) => Array.isArray(segment) ? segment : [segment])
-    .reduce<string[][]>((acc, options) => {
-      const next: string[][] = [];
-      for (const base of acc) for (const option of options) next.push([...base, option]);
-      return next;
-    }, [[]]);
 }
 
 function validateNoRuleDecisionConflicts(rules: RuleDef[]): void {

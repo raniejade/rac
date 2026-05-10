@@ -6,7 +6,7 @@ import type { RuntimeConfig, SkillAssetConfig } from '../core/config-model.js';
 import { parseCodexTomlSelector, parseSelector, pathsOverlap } from '../core/selector.js';
 import { renderVendorTemplate } from '../core/template.js';
 import type { Kind, ManagedInventoryEntry, Pack, Scope, Target } from '../core/types.js';
-import { jsonPathBracketSelector, MANAGED_JSONC_WARNING, MANAGED_TOML_WARNING, sha256, tomlQuotedKeySegment } from '../core/util.js';
+import { expandRulePattern, jsonPathBracketSelector, MANAGED_JSONC_WARNING, MANAGED_TOML_WARNING, sha256, tomlQuotedKeySegment } from '../core/util.js';
 
 import { textManagedPayload } from './shared.js';
 
@@ -79,16 +79,6 @@ function configValuesFor(config: RuntimeConfig, target: Target): Record<string, 
 
 function configsFor(config: RuntimeConfig, target: Target): typeof config.configs {
   return config.configs.filter((entry) => entry.target === target);
-}
-
-function expandRulePattern(pattern: Array<string | string[]>): string[][] {
-  return pattern
-    .map((segment) => Array.isArray(segment) ? segment : [segment])
-    .reduce<string[][]>((acc, options) => {
-      const next: string[][] = [];
-      for (const base of acc) for (const option of options) next.push([...base, option]);
-      return next;
-    }, [[]]);
 }
 
 function expandedCommandEntry(command: string[], appendWildcard: boolean): string {

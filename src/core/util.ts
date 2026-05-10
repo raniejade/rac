@@ -68,3 +68,18 @@ export function collectEnvVarsFromText(text: string): string[] {
   }
   return [...vars].sort();
 }
+
+export function expandRulePattern(pattern: Array<string | string[]>): string[][] {
+  return pattern
+    .map((segment) => Array.isArray(segment) ? segment : [segment])
+    .reduce<string[][]>((acc, options) => {
+      const next: string[][] = [];
+      for (const base of acc) for (const option of options) next.push([...base, option]);
+      return next;
+    }, [[]]);
+}
+
+export function asRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || value instanceof Date) return undefined;
+  return value as Record<string, unknown>;
+}

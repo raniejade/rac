@@ -5,7 +5,7 @@ import { parse as parseToml } from 'smol-toml';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { addProjectPack, listProjectPacks, removeProjectPack } from '../src/core/pack-config.js';
-import { loadAgents, loadInstallSettings, loadMcps, loadRules, loadSkills, loadVendorConfigs } from '../src/core/parsers.js';
+import { loadAgents, loadInstallSettings, loadMcps, loadProjectPackConfig, loadRules, loadSkills, loadVendorConfigs } from '../src/core/parsers.js';
 
 import { cleanupTmpDirs, makeTmp, runCli } from './helpers.js';
 
@@ -312,5 +312,59 @@ describe('parsers', () => {
     await mkdir(path.join(root, '.rac'), { recursive: true });
     await writeFile(path.join(root, '.rac/config.toml'), '[install]\ntargets = "claude"\n', 'utf8');
     await expect(loadInstallSettings(path.join(root, '.rac'))).rejects.toThrow('invalid install.targets');
+  });
+
+  it('pack-config: inline comment after value is parsed correctly', async () => {
+    const root = await makeTmp();
+    await mkdir(path.join(root, '.rac'), { recursive: true });
+    await writeFile(
+      path.join(root, '.rac/config.toml'),
+      'title = "demo"\n\n[[packs]]\nid = "alpha" # comment\nrepo = "github:owner/alpha"\nref = "main"\n',
+      'utf8'
+    );
+    const config = await loadProjectPackConfig(path.join(root, '.rac'));
+    expect(config.packs[0].id).toBe('alpha');
+  });
+
+  it('pack-config: two packs where one id is substring of the other are both accepted', async () => {
+    const root = await makeTmp();
+    await mkdir(path.join(root, '.rac'), { recursive: true });
+    await writeFile(
+      path.join(root, '.rac/config.toml'),
+      'title = "demo"\n\n[[packs]]\nid = "foo"\nrepo = "github:owner/foo"\nref = "main"\n\n[[packs]]\nid = "foobar"\nrepo = "github:owner/foobar"\nref = "main"\n',
+      'utf8'
+    );
+    const config = await loadProjectPackConfig(path.join(root, '.rac'));
+    expect(config.packs.map((p) => p.id)).toEqual(['foo', 'foobar']);
+  });
+
+  it('pack-config: round-trip add then remove leaves no double-blank-line artifacts', async () => {
+    const root = await makeTmp();
+    await mkdir(path.join(root, '.rac'), { recursive: true });
+    await writeFile(path.join(root, '.rac/config.toml'), 'title = "demo"\n', 'utf8');
+
+    await addProjectPack(root, { id: 'alpha', repo: 'github:owner/alpha', ref: 'main' });
+    await removeProjectPack(root, 'alpha');
+
+    const content = await readFile(path.join(root, '.rac/config.toml'), 'utf8');
+    expect(content).not.toContain('\n\n\n');
+    expect(content).toContain('title = "demo"');
+    expect(content).not.toContain('alpha');
+  });
+
+  it('pack-config: TOML escape sequences in ref are decoded by smol-toml', async () => {
+    const root = await makeTmp();
+    await mkdir(path.join(root, '.rac'), { recursive: true });
+    // ref = "v[0m" in TOML — smol-toml decodes  to ESC character
+    await writeFile(
+      path.join(root, '.rac/config.toml'),
+      'title = "demo"\n\n[[packs]]\nid = "alpha"\nrepo = "github:owner/alpha"\nref = "v\\u001b[0m"\n',
+      'utf8'
+    );
+    const config = await loadProjectPackConfig(path.join(root, '.rac'));
+    const ref = config.packs[0].ref;
+    // smol-toml decodes  into ESC (0x1b)
+    expect(ref.charCodeAt(1)).toBe(0x1b);
+    expect(ref.length).toBe(5); // 'v' + ESC + '[' + '0' + 'm'
   });
 });

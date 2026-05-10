@@ -9,7 +9,7 @@ import { z } from 'zod';
 
 import { parseSelector, pathsOverlap } from './selector.js';
 import type { AgentDef, McpDef, PackRuntime, PackSpec, RuleCommandItem, RuleDecision, RuleDef, SkillDef, Target, VendorConfigDef } from './types.js';
-import { collectEnvVarsFromText, jsonPathBracketSelector, normalizeDefinitionId } from './util.js';
+import { asRecord, collectEnvVarsFromText, jsonPathBracketSelector, normalizeDefinitionId } from './util.js';
 
 const PACK_ID_RE = /^[A-Za-z0-9._-]+$/;
 const GITHUB_REPO_RE = /^github:([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)$/;
@@ -56,30 +56,38 @@ export function validatePackSpec(spec: PackSpec): void {
   if (!REF_RE.test(spec.ref)) throw new Error(`invalid pack ref: ${spec.ref}`);
 }
 
-async function runGit(args: string[], cwd?: string): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
-    let stderr = '';
-    child.stderr.on('data', (c) => { stderr += String(c); });
-    child.on('error', (error) => {
-      const asNodeErr = error as NodeJS.ErrnoException;
-      if (asNodeErr.code === 'ENOENT') {
-        reject(new Error('git is required to resolve shared packs; install git and ensure it is on PATH'));
-        return;
-      }
-      reject(error);
+export type GitRunner = (args: string[], cwd?: string) => Promise<void>;
+
+export function defaultGitRunner(): GitRunner {
+  return async (args, cwd) => {
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+      let stderr = '';
+      child.stderr.on('data', (c) => { stderr += String(c); });
+      child.on('error', (error) => {
+        const asNodeErr = error as NodeJS.ErrnoException;
+        if (asNodeErr.code === 'ENOENT') {
+          reject(new Error('git is required to resolve shared packs; install git and ensure it is on PATH'));
+          return;
+        }
+        reject(error);
+      });
+      child.on('close', (code) => {
+        if (code === 0) {
+          resolve();
+          return;
+        }
+        reject(new Error(`git ${args.join(' ')} failed${stderr ? `: ${stderr.trim()}` : ''}`));
+      });
     });
-    child.on('close', (code) => {
-      if (code === 0) {
-        resolve();
-        return;
-      }
-      reject(new Error(`git ${args.join(' ')} failed${stderr ? `: ${stderr.trim()}` : ''}`));
-    });
-  });
+  };
 }
 
-async function ensureSharedPack(spec: PackSpec, opts: { refresh?: boolean } = {}): Promise<PackRuntime> {
+export async function ensureSharedPack(
+  spec: PackSpec,
+  opts: { refresh?: boolean; gitRunner?: GitRunner } = {},
+): Promise<PackRuntime> {
+  const runGit = opts.gitRunner ?? defaultGitRunner();
   validatePackSpec(spec);
   const gitUrl = repoToGitUrl(spec.repo);
   const key = `${spec.repo}@${spec.ref}`;
@@ -110,11 +118,6 @@ function mapId<T extends { id: string }>(items: T[], kind: string): void {
     if (seen.has(item.id)) throw new Error(`duplicate ${kind} id: ${item.id}`);
     seen.add(item.id);
   }
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  if (!value || typeof value !== 'object' || Array.isArray(value) || value instanceof Date) return undefined;
-  return value as Record<string, unknown>;
 }
 
 function isScalarJsonValue(value: unknown): boolean {
@@ -329,7 +332,10 @@ export async function loadSharedPackConfig(root: string): Promise<void> {
   if (parsed.packs !== undefined) throw new Error(`shared pack config cannot contain [[packs]]: ${configPath}`);
 }
 
-export async function resolvePacks(cwd: string, opts: { refresh?: boolean } = {}): Promise<PackRuntime[]> {
+export async function resolvePacks(
+  cwd: string,
+  opts: { refresh?: boolean; gitRunner?: GitRunner } = {},
+): Promise<PackRuntime[]> {
   const projectRoot = path.join(cwd, '.rac');
   const configPath = path.join(projectRoot, 'config.toml');
   try { await stat(configPath); } catch { throw new Error(`missing required config: ${configPath}`); }
