@@ -1,5 +1,5 @@
 ---
-"@raniejade/rac": minor
+"@raniejade/rac": patch
 ---
 
 Add `rac diff` command and reroute `install --dry-run` through the same renderer.
