@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { parse as parseToml } from 'smol-toml';
@@ -384,5 +384,40 @@ describe('parsers', () => {
 
     const skills = await loadSkills(path.join(root, '.rac'), 'project');
     expect(skills[0].assets).toEqual([]);
+  });
+
+  it('loadSkills excludes SKILL.tpl.md from discovered assets', async () => {
+    const root = await makeTmp();
+    await mkdir(path.join(root, '.rac/skills/s1'), { recursive: true });
+    await writeFile(path.join(root, '.rac/skills/s1/SKILL.tpl.md'), '+++\ndescription = "templated"\n+++\nbody {{ x }}\n', 'utf8');
+    await writeFile(path.join(root, '.rac/skills/s1/checklist.md'), '- item\n', 'utf8');
+
+    const skills = await loadSkills(path.join(root, '.rac'), 'project');
+    expect(skills[0].assets).toEqual(['checklist.md']);
+  });
+
+  it('loadSkills does not follow symlinks pointing outside the skill dir', async () => {
+    const root = await makeTmp();
+    await mkdir(path.join(root, '.rac/skills/s1'), { recursive: true });
+    await writeFile(path.join(root, '.rac/skills/s1/SKILL.md'), '+++\ndescription = "test skill"\n+++\nbody\n', 'utf8');
+    await writeFile(path.join(root, 'outside-secret.txt'), 'secret', 'utf8');
+    await symlink(path.join(root, 'outside-secret.txt'), path.join(root, '.rac/skills/s1/leaked.txt'));
+
+    const skills = await loadSkills(path.join(root, '.rac'), 'project');
+    expect(skills[0].assets).toEqual([]);
+  });
+
+  it('loadSkills silently ignores legacy assets= frontmatter (no-op)', async () => {
+    const root = await makeTmp();
+    await mkdir(path.join(root, '.rac/skills/s1'), { recursive: true });
+    await writeFile(
+      path.join(root, '.rac/skills/s1/SKILL.md'),
+      '+++\ndescription = "legacy"\nassets = ["nonexistent.md", "also-fake.md"]\n+++\nbody\n',
+      'utf8'
+    );
+    await writeFile(path.join(root, '.rac/skills/s1/real-asset.md'), 'real\n', 'utf8');
+
+    const skills = await loadSkills(path.join(root, '.rac'), 'project');
+    expect(skills[0].assets).toEqual(['real-asset.md']);
   });
 });
