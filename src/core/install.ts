@@ -175,7 +175,6 @@ export async function initProject(cwd: string, empty = false, scope: Scope = 'pr
       '+++',
       'name = "Project Gates"',
       'description = "Run required project gates before review"',
-      'assets = ["checklist.md"]',
       '+++',
       '# Project Gates',
       '',

@@ -21,7 +21,7 @@ Inputs are loaded from the active install source root:
 - Vendor-wide `[vendor.<target>.config]`, `[vendor.<target>.raw]`, and `[vendor.<target>.raw_json]` are read only from `.rac/config.toml`
 
 - `agents/*.toml`
-- `skills/*/SKILL.md` with `+++` frontmatter
+- `skills/*/SKILL.md` with `+++` frontmatter; all non-dotfiles in the skill directory are auto-discovered as assets
 - `mcps/*.toml`
 - `rules/*.toml` with one or more `[[rule]]` tables per file
 
@@ -52,7 +52,7 @@ Responsibilities:
 
 - Normalize cross-cutting fields used by all targets
 - Resolve instruction file indirection for agents
-- Resolve skill asset hashes
+- Resolve skill asset paths and compute content hashes
 - Normalize MCP transport into `local` vs `remote`
 - Normalize rule command patterns into `RuleConfig` + `ToolRuleConfig[]` with literal segments and segment-alternative arrays
 - Normalize vendor pass-through maps:

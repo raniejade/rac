@@ -77,7 +77,6 @@ Skill definition (`.rac/skills/<id>/SKILL.md`):
 +++
 name = "release-check"
 description = "Run release checks"
-assets = ["assets/checklist.md"]
 
 [vendor.codex.config]
 tags = ["release"]
@@ -91,7 +90,10 @@ Run the release checklist and report blocking issues.
 
 - Skills may use either `SKILL.md` or `SKILL.tpl.md`, not both in one directory.
 - Frontmatter is TOML between the opening and closing `+++` delimiters, then the skill body.
-- Assets are resolved relative to the skill directory and copied with the installed skill.
+- All files in the skill directory (recursive) are auto-discovered and installed alongside `SKILL.md`:
+  - Dotfiles and dot-directories (e.g. `.DS_Store`, `.gitignore`) are excluded.
+  - Symlinks are not followed and not installed.
+  - Subdirectory structure is preserved at the install target (e.g. `references/notes.md` → `.claude/skills/<id>/references/notes.md`).
 - Use `vendor.<target>.config` and `vendor.<target>.frontmatter` for target-specific skill frontmatter overlays.
 - Skills merge order is generated base -> `vendor.<target>.config` -> `vendor.<target>.frontmatter`.
 - Generated-key collisions fail fast, for example `name` or `description`.
