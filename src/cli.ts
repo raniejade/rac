@@ -5,7 +5,8 @@ import { Command, InvalidArgumentError } from 'commander';
 
 import pkg from '../package.json' with { type: 'json' };
 
-import { detectColorMode, renderDoctor, renderEmpty, renderInstall, renderList, renderSuccess, renderUninstall, startSpinner } from './cli/output/index.js';
+import { detectColorMode, renderDiff, renderDoctor, renderEmpty, renderInstall, renderList, renderSuccess, renderUninstall, startSpinner } from './cli/output/index.js';
+import { diff } from './core/diff.js';
 import { doctor, initProject, install } from './core/install.js';
 import { addProjectPack, listProjectPacks, removeProjectPack } from './core/pack-config.js';
 import type { Kind, Scope, Target } from './core/types.js';
@@ -64,36 +65,89 @@ export function createProgram(): Command {
     .description('Install selected kinds/targets from .rac definitions')
     .option('--targets <targets>', 'comma-separated: claude,codex,opencode')
     .option('--kind <kinds>', 'comma-separated: agent,skill,mcp,rule,config')
-    .option('--dry-run', 'print planned changes only')
+    .option('--dry-run', 'print planned changes only (shows unified diffs; use --summary for path/count only)')
+    .option('--summary', 'with --dry-run: suppress per-file diffs, show path/count summary only')
     .option('--clean', 'delete stale files tracked by manifest for selected kind/target')
     .option('--check', 'verify generated outputs/manifests are up to date without writing')
     .option('--force', 'override unmanaged files')
     .option('--refresh-packs', 'force re-clone of shared pack caches before installing')
     .option('--scope <scope>', 'project|user (default project)')
     .option('--no-merge', 'bypass surgical merge of shared config files; write generated content wholesale')
-    .action(async (opts: { targets?: string; kind?: string; dryRun?: boolean; clean?: boolean; check?: boolean; force?: boolean; refreshPacks?: boolean; scope?: string; noMerge?: boolean }) => {
+    .action(async (opts: { targets?: string; kind?: string; dryRun?: boolean; summary?: boolean; clean?: boolean; check?: boolean; force?: boolean; refreshPacks?: boolean; scope?: string; noMerge?: boolean }) => {
+      const cwd = process.cwd();
       const mode = detectColorMode({ plainFlag: !!(program.opts() as { plain?: boolean }).plain });
       const spinner = startSpinner('Installing…', mode);
       try {
-        const result = await install({
+        if (opts.dryRun) {
+          // Reroute dry-run through the diff renderer for content-level diffs
+          const diffResult = await diff({
+            cwd,
+            targets: normalizeTargets(opts.targets),
+            kinds: normalizeKinds(opts.kind),
+            refreshPacks: !!opts.refreshPacks,
+            scope: normalizeScope(opts.scope),
+            noMerge: opts.noMerge ? true : undefined,
+            detectDrift: true,
+          });
+          spinner.stop();
+          process.stdout.write(renderDiff(diffResult, {
+            cwd,
+            mode,
+            summary: !!opts.summary,
+            dryRun: true,
+          }));
+        } else {
+          const result = await install({
+            targets: normalizeTargets(opts.targets),
+            kinds: normalizeKinds(opts.kind),
+            dryRun: false,
+            clean: !!opts.clean,
+            check: !!opts.check,
+            force: !!opts.force,
+            refreshPacks: !!opts.refreshPacks,
+            scope: normalizeScope(opts.scope),
+            noMerge: opts.noMerge ? true : undefined,
+            cwd,
+          });
+          spinner.stop();
+          process.stdout.write(renderInstall(result, {
+            cwd,
+            mode,
+            check: !!opts.check,
+            dryRun: false,
+          }));
+        }
+      } catch (err) {
+        spinner.stop();
+        throw err;
+      }
+    });
+
+  program.command('diff')
+    .description('Show content-level diffs of what would change and detect drift in managed files')
+    .option('--targets <targets>', 'comma-separated: claude,codex,opencode')
+    .option('--kind <kinds>', 'comma-separated: agent,skill,mcp,rule,config')
+    .option('--scope <scope>', 'project|user (default project)')
+    .option('--refresh-packs', 'force re-clone of shared pack caches before diffing')
+    .option('--no-merge', 'bypass surgical merge of shared config files')
+    .option('--summary', 'suppress per-file unified diffs; show path/count summary only')
+    .option('--no-drift', 'skip drift detection section')
+    .action(async (opts: { targets?: string; kind?: string; scope?: string; refreshPacks?: boolean; noMerge?: boolean; summary?: boolean; drift?: boolean }) => {
+      const cwd = process.cwd();
+      const mode = detectColorMode({ plainFlag: !!(program.opts() as { plain?: boolean }).plain });
+      const spinner = startSpinner('Computing diff…', mode);
+      try {
+        const result = await diff({
+          cwd,
           targets: normalizeTargets(opts.targets),
           kinds: normalizeKinds(opts.kind),
-          dryRun: !!opts.dryRun,
-          clean: !!opts.clean,
-          check: !!opts.check,
-          force: !!opts.force,
-          refreshPacks: !!opts.refreshPacks,
           scope: normalizeScope(opts.scope),
+          refreshPacks: !!opts.refreshPacks,
           noMerge: opts.noMerge ? true : undefined,
-          cwd: process.cwd()
+          detectDrift: opts.drift !== false,
         });
         spinner.stop();
-        process.stdout.write(renderInstall(result, {
-          cwd: process.cwd(),
-          mode,
-          check: !!opts.check,
-          dryRun: !!opts.dryRun
-        }));
+        process.stdout.write(renderDiff(result, { cwd, mode, summary: !!opts.summary }));
       } catch (err) {
         spinner.stop();
         throw err;

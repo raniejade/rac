@@ -5,9 +5,17 @@ export {
   renderDoctor,
 } from './doctor.js';
 export {
+  type DiffEntryView,
+  type DriftEntryView,
+  type DiffResultView,
+  renderDiff,
+} from './diff.js';
+export {
   type InstallAction,
+  type ChangeListEntry,
   type InstallChangeView,
   type InstallResultView,
+  renderChangeList,
   renderInstall,
 } from './install.js';
 export { badge, pad, relPath, renderEmpty, renderList, renderSuccess, symbol } from './render.js';

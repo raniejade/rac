@@ -25,30 +25,35 @@ export interface InstallResultView {
 const TARGET_ORDER = ['claude', 'codex', 'opencode'];
 const KIND_ORDER = ['agent', 'skill', 'mcp', 'rule', 'config'];
 
+export interface ChangeListEntry {
+  action: InstallAction;
+  target: string;
+  kind: string;
+  pack: string;
+  id: string;
+  relPath: string;
+  absPath: string;
+}
+
 /**
- * Render an install result as a formatted string.
- * Groups changes by target then by kind, adds a summary line.
+ * Render a grouped table of changes (target → kind). Returns lines without a trailing newline
+ * after the last group. Caller is responsible for adding spacing and summary line.
  */
-export function renderInstall(
-  result: InstallResultView,
-  opts: { cwd: string; mode: ColorMode; check?: boolean; dryRun?: boolean },
-): string {
-  if (result.changes.length === 0) {
-    return renderEmpty('Nothing to do.', opts.mode);
-  }
+export function renderChangeList(changes: ChangeListEntry[], opts: { cwd: string; mode: ColorMode }): string {
+  if (changes.length === 0) return '';
 
   const s = styles(opts.mode);
 
   // Group by target
-  const byTarget = new Map<string, InstallChangeView[]>();
-  for (const change of result.changes) {
+  const byTarget = new Map<string, ChangeListEntry[]>();
+  for (const change of changes) {
     const list = byTarget.get(change.target) ?? [];
     list.push(change);
     byTarget.set(change.target, list);
   }
 
   // Compute id-with-pack column width across all rows for alignment
-  const idPackStrings = result.changes.map((c) => `${c.id} (${c.pack}:${c.id})`);
+  const idPackStrings = changes.map((c) => `${c.id} (${c.pack}:${c.id})`);
   const maxIdPack = Math.max(...idPackStrings.map((s) => s.length));
   const idPackWidth = maxIdPack + 2;
 
@@ -61,10 +66,10 @@ export function renderInstall(
   ];
 
   for (const target of orderedTargets) {
-    const changes = byTarget.get(target)!;
+    const targetChanges = byTarget.get(target)!;
 
     // Sort by kind order
-    changes.sort((a, b) => {
+    targetChanges.sort((a, b) => {
       const ai = KIND_ORDER.indexOf(a.kind);
       const bi = KIND_ORDER.indexOf(b.kind);
       const aIdx = ai === -1 ? KIND_ORDER.length : ai;
@@ -74,7 +79,7 @@ export function renderInstall(
 
     lines.push(s.bold(target));
 
-    for (const change of changes) {
+    for (const change of targetChanges) {
       const sym = symbol(change.action, opts.mode);
       // pad kind to 7 chars on raw string before coloring
       const paddedKind = pad(change.kind, 7);
@@ -87,6 +92,23 @@ export function renderInstall(
     }
   }
 
+  return lines.join('\n');
+}
+
+/**
+ * Render an install result as a formatted string.
+ * Groups changes by target then by kind, adds a summary line.
+ */
+export function renderInstall(
+  result: InstallResultView,
+  opts: { cwd: string; mode: ColorMode; check?: boolean; dryRun?: boolean },
+): string {
+  if (result.changes.length === 0) {
+    return renderEmpty('Nothing to do.', opts.mode);
+  }
+
+  const lines: string[] = [];
+  lines.push(renderChangeList(result.changes, opts));
   lines.push('');
 
   // Summary line

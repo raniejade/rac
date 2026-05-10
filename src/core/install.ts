@@ -12,7 +12,7 @@ import { loadAgents, loadInstallSettings, loadMcps, loadRules, loadSkills, loadV
 import type { InstallChange, InstallManifest, InstallOptions, InstallResult, Kind, ManifestRecord, Scope, Target } from './types.js';
 import { MANAGED_JSONC_WARNING, MANAGED_MARKDOWN_WARNING, MANAGED_TOML_WARNING, resolveContainedPath, sha256 } from './util.js';
 
-type PlannedWrite = ManifestRecord & {
+export type PlannedWrite = ManifestRecord & {
   manifestRelPath: string;
   absPath: string;
   content?: string;
@@ -20,7 +20,30 @@ type PlannedWrite = ManifestRecord & {
   isJson?: boolean;
 };
 
-async function exists(filePath: string): Promise<boolean> {
+export type ManifestEntry = { root: string; manifestRelPath: string; absPath: string; manifest: InstallManifest };
+
+export type ComputeInstallPlanResult = {
+  plan: PlannedWrite[];
+  targets: Target[];
+  scope: Scope;
+  noMerge: boolean;
+  targetRootByTarget: Record<Target, string>;
+  manifestsByAbsPath: Map<string, ManifestEntry>;
+  ownedRelPaths: Set<string>;
+  recordsByRelPath: Map<string, ManifestRecord[]>;
+  planByRelPath: Map<string, PlannedWrite[]>;
+  mergeOverrideHashByRelPath: Map<string, string>;
+  liveKeysByManifestAbsPath: Map<string, Set<string>>;
+  staleByManifestAbsPath: Map<string, { root: string; records: ManifestRecord[] }>;
+  keptRelPaths: Set<string>;
+  cleanRewriteSharedFiles: Array<{ absPath: string; content: string; hash: string; relPath: string }>;
+  shouldMigrateLegacyOpenCodeJson: boolean;
+  legacyOpenCodeSharedAbsPath: string | undefined;
+  legacyOpenCodeSharedRecords: ManifestRecord[];
+  nextManifestsByAbsPath: Map<string, { absPath: string; manifest: InstallManifest; manifestRelPath: string; root: string }>;
+};
+
+export async function exists(filePath: string): Promise<boolean> {
   try {
     await stat(filePath);
     return true;
@@ -70,7 +93,7 @@ async function canOverwrite(filePath: string, ownedRelPaths: Set<string>, relPat
   return false;
 }
 
-async function contentMatches(filePath: string, expectedHash: string): Promise<boolean> {
+export async function contentMatches(filePath: string, expectedHash: string): Promise<boolean> {
   return sha256(await readFile(filePath)) === expectedHash;
 }
 
@@ -198,7 +221,7 @@ export async function initProject(cwd: string, empty = false, scope: Scope = 'pr
   );
 }
 
-export async function install(options: InstallOptions): Promise<InstallResult> {
+export async function computeInstallPlan(options: InstallOptions): Promise<ComputeInstallPlanResult> {
   const { sourceRoot, targetRootHome, scope } = resolveScopeRoots(options);
   const installSettings = await loadInstallSettings(sourceRoot);
   const noMerge = options.noMerge ?? !installSettings.merge;
@@ -210,7 +233,6 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
     opencode: targetRootFor('opencode', scope, targetRootHome)
   };
 
-  type ManifestEntry = { root: string; manifestRelPath: string; absPath: string; manifest: InstallManifest };
   const manifestsByAbsPath = new Map<string, ManifestEntry>();
   for (const target of targets) {
     for (const kind of ALL_KINDS) {
@@ -356,58 +378,6 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
     }
   }
 
-  const changes: InstallChange[] = [];
-  const seenResultPath = new Set<string>();
-  const checkedOverwritePath = new Set<string>();
-  const appliedWriteByPath = new Set<string>();
-
-  for (const write of plan) {
-    if (!checkedOverwritePath.has(write.absPath)) {
-      const strictJson = write.relPath === '.mcp.json' || write.relPath === '.claude/settings.json' || write.relPath.endsWith('.json') || write.relPath.endsWith('.rac-install-manifest.json');
-      const hasStrategy = !noMerge && pickMergeStrategy(write.target, write.relPath) !== undefined;
-      if (!(await canOverwrite(write.absPath, ownedRelPaths, write.relPath, !!options.force, strictJson, hasStrategy))) {
-        throw new Error(`refusing overwrite unmanaged file: ${write.absPath}`);
-      }
-      checkedOverwritePath.add(write.absPath);
-    }
-
-    const alreadyExists = await exists(write.absPath);
-    if (!seenResultPath.has(write.absPath)) {
-      if (!alreadyExists) {
-        changes.push({
-          action: 'create',
-          target: write.target,
-          kind: write.kind,
-          pack: write.pack,
-          id: write.id,
-          relPath: write.relPath,
-          absPath: write.absPath
-        });
-      } else if (!(await contentMatches(write.absPath, write.hash))) {
-        changes.push({
-          action: 'update',
-          target: write.target,
-          kind: write.kind,
-          pack: write.pack,
-          id: write.id,
-          relPath: write.relPath,
-          absPath: write.absPath
-        });
-      }
-      seenResultPath.add(write.absPath);
-    }
-
-    if (!options.dryRun && !options.check && !appliedWriteByPath.has(write.absPath)) {
-      await mkdir(path.dirname(write.absPath), { recursive: true });
-      if (write.sourceFile) {
-        await copyFile(write.sourceFile, write.absPath);
-      } else {
-        await writeFile(write.absPath, write.content ?? '', 'utf8');
-      }
-      appliedWriteByPath.add(write.absPath);
-    }
-  }
-
   const liveKeysByManifestAbsPath = new Map<string, Set<string>>();
   for (const write of plan) {
     const root = targetRootByTarget[write.target];
@@ -482,6 +452,116 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
     }
   }
 
+  const nextManifestsByAbsPath = new Map<string, { absPath: string; manifest: InstallManifest; manifestRelPath: string; root: string }>();
+  const migrateLegacyOpenCodeSharedRecord = (record: ManifestRecord): ManifestRecord => {
+    if (shouldMigrateLegacyOpenCodeJson && isManagedOpenCodeSharedJson(record) && record.relPath === '.opencode/opencode.json') {
+      return { ...record, relPath: '.opencode/opencode.jsonc' };
+    }
+    return record;
+  };
+  const applyMergeOverride = (record: ManifestRecord): ManifestRecord => {
+    const override = mergeOverrideHashByRelPath.get(record.relPath);
+    if (override !== undefined) return { ...record, hash: override };
+    return record;
+  };
+  for (const [absPath, entry] of manifestsByAbsPath) {
+    const keep = entry.manifest.records.filter((record) => !selected(record)).map(migrateLegacyOpenCodeSharedRecord).map(applyMergeOverride);
+    const planAbsPathFor = (record: PlannedWrite) => resolveContainedPath(targetRootByTarget[record.target], record.manifestRelPath, 'manifest path');
+    const current = plan
+      .filter((record) => planAbsPathFor(record) === absPath)
+      .map(({ version, pack, target, kind, id, source, relPath, hash, inventory }) => applyMergeOverride(migrateLegacyOpenCodeSharedRecord({ version, pack, target, kind, id, source, relPath, hash, inventory })));
+    nextManifestsByAbsPath.set(absPath, { absPath: entry.absPath, manifest: { version: 1, records: sortManifestRecords([...keep, ...current]) }, manifestRelPath: entry.manifestRelPath, root: entry.root });
+  }
+
+  return {
+    plan,
+    targets,
+    scope,
+    noMerge,
+    targetRootByTarget,
+    manifestsByAbsPath,
+    ownedRelPaths,
+    recordsByRelPath,
+    planByRelPath,
+    mergeOverrideHashByRelPath,
+    liveKeysByManifestAbsPath,
+    staleByManifestAbsPath,
+    keptRelPaths,
+    cleanRewriteSharedFiles,
+    shouldMigrateLegacyOpenCodeJson,
+    legacyOpenCodeSharedAbsPath,
+    legacyOpenCodeSharedRecords,
+    nextManifestsByAbsPath,
+  };
+}
+
+export async function install(options: InstallOptions): Promise<InstallResult> {
+  const r = await computeInstallPlan(options);
+  const {
+    plan,
+    manifestsByAbsPath,
+    ownedRelPaths,
+    staleByManifestAbsPath,
+    keptRelPaths,
+    cleanRewriteSharedFiles,
+    shouldMigrateLegacyOpenCodeJson,
+    legacyOpenCodeSharedAbsPath,
+    legacyOpenCodeSharedRecords,
+    nextManifestsByAbsPath,
+  } = r;
+
+  const changes: InstallChange[] = [];
+  const seenResultPath = new Set<string>();
+  const checkedOverwritePath = new Set<string>();
+  const appliedWriteByPath = new Set<string>();
+
+  for (const write of plan) {
+    if (!checkedOverwritePath.has(write.absPath)) {
+      const strictJson = write.relPath === '.mcp.json' || write.relPath === '.claude/settings.json' || write.relPath.endsWith('.json') || write.relPath.endsWith('.rac-install-manifest.json');
+      const hasStrategy = !r.noMerge && pickMergeStrategy(write.target, write.relPath) !== undefined;
+      if (!(await canOverwrite(write.absPath, ownedRelPaths, write.relPath, !!options.force, strictJson, hasStrategy))) {
+        throw new Error(`refusing overwrite unmanaged file: ${write.absPath}`);
+      }
+      checkedOverwritePath.add(write.absPath);
+    }
+
+    const alreadyExists = await exists(write.absPath);
+    if (!seenResultPath.has(write.absPath)) {
+      if (!alreadyExists) {
+        changes.push({
+          action: 'create',
+          target: write.target,
+          kind: write.kind,
+          pack: write.pack,
+          id: write.id,
+          relPath: write.relPath,
+          absPath: write.absPath
+        });
+      } else if (!(await contentMatches(write.absPath, write.hash))) {
+        changes.push({
+          action: 'update',
+          target: write.target,
+          kind: write.kind,
+          pack: write.pack,
+          id: write.id,
+          relPath: write.relPath,
+          absPath: write.absPath
+        });
+      }
+      seenResultPath.add(write.absPath);
+    }
+
+    if (!options.dryRun && !options.check && !appliedWriteByPath.has(write.absPath)) {
+      await mkdir(path.dirname(write.absPath), { recursive: true });
+      if (write.sourceFile) {
+        await copyFile(write.sourceFile, write.absPath);
+      } else {
+        await writeFile(write.absPath, write.content ?? '', 'utf8');
+      }
+      appliedWriteByPath.add(write.absPath);
+    }
+  }
+
   const seenDeletePath = new Set<string>();
   if (options.clean) {
     for (const { root, records: staleRecords } of staleByManifestAbsPath.values()) {
@@ -512,27 +592,6 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
       relPath: '.opencode/opencode.json',
       absPath: legacyOpenCodeSharedAbsPath
     });
-  }
-
-  const nextManifestsByAbsPath = new Map<string, { absPath: string; manifest: InstallManifest; manifestRelPath: string; root: string }>();
-  const migrateLegacyOpenCodeSharedRecord = (record: ManifestRecord): ManifestRecord => {
-    if (shouldMigrateLegacyOpenCodeJson && isManagedOpenCodeSharedJson(record) && record.relPath === '.opencode/opencode.json') {
-      return { ...record, relPath: '.opencode/opencode.jsonc' };
-    }
-    return record;
-  };
-  const applyMergeOverride = (record: ManifestRecord): ManifestRecord => {
-    const override = mergeOverrideHashByRelPath.get(record.relPath);
-    if (override !== undefined) return { ...record, hash: override };
-    return record;
-  };
-  for (const [absPath, entry] of manifestsByAbsPath) {
-    const keep = entry.manifest.records.filter((record) => !selected(record)).map(migrateLegacyOpenCodeSharedRecord).map(applyMergeOverride);
-    const planAbsPathFor = (record: PlannedWrite) => resolveContainedPath(targetRootByTarget[record.target], record.manifestRelPath, 'manifest path');
-    const current = plan
-      .filter((record) => planAbsPathFor(record) === absPath)
-      .map(({ version, pack, target, kind, id, source, relPath, hash, inventory }) => applyMergeOverride(migrateLegacyOpenCodeSharedRecord({ version, pack, target, kind, id, source, relPath, hash, inventory })));
-    nextManifestsByAbsPath.set(absPath, { absPath: entry.absPath, manifest: { version: 1, records: sortManifestRecords([...keep, ...current]) }, manifestRelPath: entry.manifestRelPath, root: entry.root });
   }
 
   if (options.check) {

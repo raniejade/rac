@@ -9,7 +9,7 @@ import { doctor, initProject, install } from '../src/core/install.js';
 import { loadProjectPackConfig, loadSharedPackConfig } from '../src/core/parsers.js';
 import { MANAGED_JSONC_WARNING, MANAGED_MARKDOWN_WARNING, MANAGED_TOML_WARNING } from '../src/core/util.js';
 
-import { cleanupTmpDirs, makeTmp, readJsoncFile, seed } from './helpers.js';
+import { cleanupTmpDirs, makeTmp, readJsoncFile, runCliInProcess, seed } from './helpers.js';
 
 afterEach(cleanupTmpDirs);
 
@@ -1193,5 +1193,38 @@ describe('install + doctor', () => {
     expect(typeof change.id).toBe('string');
     expect(typeof change.relPath).toBe('string');
     expect(typeof change.absPath).toBe('string');
+  });
+
+  it('install --dry-run --summary preserves legacy path/count format without @@ hunk markers', async () => {
+    const root = await makeTmp();
+    await seed(root);
+
+    const result = await runCliInProcess(root, ['install', '--dry-run', '--summary', '--targets', 'claude', '--kind', 'agent', '--plain']);
+
+    expect(result.status).toBe(0);
+    // Summary mode: contains the path and action symbol, does NOT contain @@ hunk markers
+    expect(result.stdout).not.toContain('@@');
+    // Should contain plan summary line
+    expect(result.stdout).toMatch(/Plan:.*to create.*\(dry-run\)/);
+    // Should contain agent path/action row
+    expect(result.stdout).toContain('agent');
+    expect(result.stdout).toContain('+');
+  });
+
+  it('install --dry-run (no --summary) reroutes through diff renderer with content-level diff', async () => {
+    const root = await makeTmp();
+    await seed(root);
+    // First install agents so we can create an update scenario
+    await install({ cwd: root, targets: ['claude'], kinds: ['agent'] });
+    // Modify source file to create an update
+    await writeFile(path.join(root, '.rac/agents/reviewer.md'), 'Modified review instructions.\n', 'utf8');
+
+    const result = await runCliInProcess(root, ['install', '--dry-run', '--targets', 'claude', '--kind', 'agent', '--plain']);
+
+    expect(result.status).toBe(0);
+    // With changes, the diff renderer should output unified diff markers
+    expect(result.stdout).toContain('@@');
+    // Should contain the (dry-run) label
+    expect(result.stdout).toContain('(dry-run)');
   });
 });

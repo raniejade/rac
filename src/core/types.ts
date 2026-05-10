@@ -163,3 +163,46 @@ export type UninstallResult = {
   prunedSelectors: Array<{ absPath: string; selector: string }>;
   deletedManifests: string[];
 };
+
+export type DiffOptions = {
+  cwd: string;
+  scope?: Scope;
+  targets?: Target[];
+  kinds: Kind[];
+  refreshPacks?: boolean;
+  noMerge?: boolean;
+  detectDrift?: boolean; // default true
+};
+
+export type DiffEntry = {
+  action: 'create' | 'update' | 'delete';
+  target: Target;
+  kind: Kind;
+  pack: Pack;
+  id: string;
+  relPath: string;
+  absPath: string;
+  before: string | null;
+  after: string | null;
+  binary: boolean;
+};
+
+export type DriftEntry = {
+  target: Target;
+  kind: Kind;
+  pack: Pack;
+  id: string;
+  relPath: string;
+  absPath: string;
+  manifestHash: string;
+  currentHash: string;
+  current: string | null;
+};
+
+export type DiffResult = {
+  changes: DiffEntry[];
+  drift: DriftEntry[];
+  create: string[];
+  update: string[];
+  del: string[];
+};
