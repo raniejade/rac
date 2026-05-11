@@ -449,7 +449,7 @@ function normalizeLockForCompare(lock: PackLockFile | null): string {
 
 export async function resolvePacks(
   cwd: string,
-  opts: { refresh?: boolean; gitRunner?: GitRunner; frozen?: boolean } = {},
+  opts: { refresh?: boolean; gitRunner?: GitRunner; frozen?: boolean; noWrite?: boolean } = {},
 ): Promise<PackRuntime[]> {
   const projectRoot = path.join(cwd, '.rac');
   const configPath = path.join(projectRoot, 'config.toml');
@@ -507,35 +507,39 @@ export async function resolvePacks(
   const lockChanged = normalizeLockForCompare(existingLock) !== normalizeLockForCompare(newLock);
 
   if (opts.frozen === true && lockChanged) {
-    // Build violation messages
-    const violations: string[] = [];
+    if (opts.noWrite === true) {
+      // noWrite suppresses both the throw and the write — doctor handles reporting itself
+    } else {
+      // Build violation messages
+      const violations: string[] = [];
 
-    for (const entry of newLockEntries) {
-      const existingEntry = existingLock?.packs.find(
-        (e) => e.id === entry.id && e.repo === entry.repo && e.ref === entry.ref
-      );
-      if (existingEntry === undefined) {
-        violations.push(
-          `pack '${entry.id}' has no lockfile entry; run 'rac install' without --frozen-lockfile to create one`
+      for (const entry of newLockEntries) {
+        const existingEntry = existingLock?.packs.find(
+          (e) => e.id === entry.id && e.repo === entry.repo && e.ref === entry.ref
         );
-      } else if (existingEntry.resolved !== entry.resolved) {
-        violations.push(
-          `pack '${entry.id}' is locked to ${existingEntry.resolved} but config.toml ref '${entry.ref}' has moved upstream; run 'rac install --refresh-packs' to update`
-        );
+        if (existingEntry === undefined) {
+          violations.push(
+            `pack '${entry.id}' has no lockfile entry; run 'rac install' without --frozen-lockfile to create one`
+          );
+        } else if (existingEntry.resolved !== entry.resolved) {
+          violations.push(
+            `pack '${entry.id}' is locked to ${existingEntry.resolved} but config.toml ref '${entry.ref}' has moved upstream; run 'rac install --refresh-packs' to update`
+          );
+        }
       }
-    }
 
-    // Also check if entries were removed from config (stale entries in lockfile)
-    // Per spec: stale entries — do not throw for them in frozen mode, just don't write
-    // (only violations from new/changed entries are reported)
+      // Also check if entries were removed from config (stale entries in lockfile)
+      // Per spec: stale entries — do not throw for them in frozen mode, just don't write
+      // (only violations from new/changed entries are reported)
 
-    if (violations.length > 0) {
-      throw new FrozenLockfileError(`--frozen-lockfile:\n${violations.join('\n')}`);
+      if (violations.length > 0) {
+        throw new FrozenLockfileError(`--frozen-lockfile:\n${violations.join('\n')}`);
+      }
+      // If we get here, the only change is stale entries (removed packs) — don't write, don't throw
     }
-    // If we get here, the only change is stale entries (removed packs) — don't write, don't throw
-  } else if (opts.frozen !== true && lockChanged && newLockEntries.length > 0) {
+  } else if (opts.frozen !== true && lockChanged && opts.noWrite !== true && newLockEntries.length > 0) {
     await writePackLock(projectRoot, newLock);
-  } else if (opts.frozen !== true && lockChanged && newLockEntries.length === 0 && existingLock !== null) {
+  } else if (opts.frozen !== true && lockChanged && opts.noWrite !== true && newLockEntries.length === 0 && existingLock !== null) {
     // All packs removed from config — write empty lockfile to clean up stale entries
     await writePackLock(projectRoot, newLock);
   }

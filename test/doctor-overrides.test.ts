@@ -376,6 +376,28 @@ describe('doctor: lockfile diagnostics', () => {
     }
   });
 
+  it('rac doctor does not create rac-lock.json', async () => {
+    const root = await makeTmp();
+    const cacheDir = await seedProjectWithPack(root, FAKE_PACK_SPEC);
+    const origCacheDir = process.env.RAC_CACHE_DIR;
+    process.env.RAC_CACHE_DIR = cacheDir;
+
+    try {
+      // No lockfile seeded — doctor must not write one
+      await doctor(root, undefined, ['agent'], 'project', {
+        gitRunner: makeFakeGitRunner(),
+      });
+
+      // Assert rac-lock.json was NOT created
+      const { stat } = await import('node:fs/promises');
+      await expect(
+        stat(path.join(root, '.rac', 'rac-lock.json'))
+      ).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      process.env.RAC_CACHE_DIR = origCacheDir;
+    }
+  });
+
   it('frozen + no packs in config + no lockfile: no lockfile errors', async () => {
     const root = await makeTmp();
     await seedMinimal(root);

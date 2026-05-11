@@ -768,7 +768,7 @@ export async function doctor(
   // masking the diagnostic with an exception.
   let packs: Awaited<ReturnType<typeof resolvePacks>> = [];
   if (lockMalformedError === null) {
-    packs = await resolvePacks(sourceCwd, { gitRunner: opts.gitRunner });
+    packs = await resolvePacks(sourceCwd, { gitRunner: opts.gitRunner, noWrite: true });
   }
 
   const parsedAgents = [] as Awaited<ReturnType<typeof loadAgents>>;

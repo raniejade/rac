@@ -273,7 +273,7 @@ Errors with **exit code 2** if a sync would add or mutate any lockfile entry. Re
 
 ### Overrides
 
-Pack overrides (`.rac/config.local.toml`) skip git entirely and are never written to or read from the lockfile. The lockfile entry for an overridden pack is left untouched.
+Pack overrides (`.rac/config.local.toml`) skip git entirely. Pack overrides are excluded from the lockfile entirely. If a pack has an active override, its lockfile entry is pruned on the next `rac install`. Clearing the override and running `rac install` will re-resolve and re-lock the pack.
 
 ### `rac doctor` lockfile checks
 

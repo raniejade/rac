@@ -588,6 +588,84 @@ describe('resolvePacks lockfile integration', () => {
     }
   });
 
+  it('noWrite:true with empty lockfile: resolves successfully and does not create lockfile', async () => {
+    const { project, cacheDir } = await makePackProject();
+    const origCache = process.env.RAC_CACHE_DIR;
+    process.env.RAC_CACHE_DIR = cacheDir;
+
+    try {
+      const expectedSha = 'a'.repeat(40);
+      const runner = makeRunner({ 'rev-parse HEAD': `${expectedSha}\n` });
+
+      // Should resolve without error
+      const result = await resolvePacks(project, { gitRunner: runner, noWrite: true });
+      expect(result.length).toBeGreaterThan(0);
+
+      // Lockfile must NOT have been written
+      const lock = await loadPackLock(path.join(project, '.rac'));
+      expect(lock).toBeNull();
+    } finally {
+      process.env.RAC_CACHE_DIR = origCache;
+    }
+  });
+
+  it('noWrite:true with frozen:true and missing lockfile: does NOT throw FrozenLockfileError and does NOT write', async () => {
+    const { project, cacheDir } = await makePackProject();
+    const origCache = process.env.RAC_CACHE_DIR;
+    process.env.RAC_CACHE_DIR = cacheDir;
+
+    try {
+      const runner = makeRunner({ 'rev-parse HEAD': `${'e'.repeat(40)}\n` });
+
+      // Should NOT throw even though frozen + no lockfile entry
+      await expect(
+        resolvePacks(project, { gitRunner: runner, frozen: true, noWrite: true })
+      ).resolves.toBeDefined();
+
+      // Lockfile must NOT have been written
+      const lock = await loadPackLock(path.join(project, '.rac'));
+      expect(lock).toBeNull();
+    } finally {
+      process.env.RAC_CACHE_DIR = origCache;
+    }
+  });
+
+  it('noWrite:true with refresh:true: resolves but does not write lockfile', async () => {
+    const { project, cacheDir } = await makePackProject();
+    const origCache = process.env.RAC_CACHE_DIR;
+    process.env.RAC_CACHE_DIR = cacheDir;
+
+    const key = 'github:owner/alpha@main';
+    const keyHash = Buffer.from(key).toString('base64url');
+    const repoDir = path.join(cacheDir, 'packs', keyHash);
+    const newSha = 'd'.repeat(40);
+
+    const runner = vi.fn(async (args: string[], cwd?: string) => {
+      void cwd;
+      if (args[0] === 'clone') {
+        const target = args[2];
+        await mkdir(path.join(target, '.git'), { recursive: true });
+        await mkdir(path.join(target, '.rac'), { recursive: true });
+        await writeFile(path.join(target, '.rac/config.toml'), '', 'utf8');
+      }
+      if (args[0] === 'rev-parse') return { stdout: `${newSha}\n` };
+      return { stdout: '' };
+    }) as unknown as GitRunner;
+
+    try {
+      await expect(
+        resolvePacks(project, { gitRunner: runner, refresh: true, noWrite: true })
+      ).resolves.toBeDefined();
+
+      // Lockfile must NOT have been written
+      const lock = await loadPackLock(path.join(project, '.rac'));
+      expect(lock).toBeNull();
+    } finally {
+      process.env.RAC_CACHE_DIR = origCache;
+      void repoDir;
+    }
+  });
+
   it('pack removed from config: stale lockfile entry cleaned up; no error thrown', async () => {
     const project = await makeTmp();
     const cacheDir = await makeTmp();
