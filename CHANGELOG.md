@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.4.0
+
+### Minor Changes
+
+- [#39](https://github.com/raniejade/rac/pull/39) [`c6f501b`](https://github.com/raniejade/rac/commit/c6f501bfc90d8798ff98d8e1e6080c3798334d7f) Thanks [@raniejade](https://github.com/raniejade)! - Add local pack overrides for dev cycle. A new `.rac/config.local.toml` (gitignored) with `[[pack_overrides]]` entries redirects a configured `[[packs]]` id to a local directory, bypassing git and cache so packs can be iterated on locally without commit/push churn.
+
+  - New CLI: `rac pack override <id> <path>` and `rac pack override <id> --clear`.
+  - `rac pack list` decorates overridden packs with `(override → <path>)`.
+  - `rac doctor` and `rac install` emit a `WARN` per active override (install still exits 0).
+  - `rac init` writes `.rac/.gitignore` containing `config.local.toml`.
+
+- [#41](https://github.com/raniejade/rac/pull/41) [`33037ca`](https://github.com/raniejade/rac/commit/33037ca07ba4ad1c84c8503ce6fd1a0e179cb5f7) Thanks [@raniejade](https://github.com/raniejade)! - Pin shared packs to resolved commit SHAs via `.rac/rac-lock.json`. The lockfile is committed alongside `config.toml`; future installs check out the locked SHA instead of re-resolving the floating `ref`. Two machines installing the same project now produce identical outputs, and CI can gate on lockfile drift.
+
+  - New flag `--frozen-lockfile` for `rac install`, `rac diff`, and `rac doctor`: errors (exit code 2) if the lockfile would change.
+  - Existing `--refresh-packs` now also re-resolves and rewrites the lockfile.
+  - `rac pack add` / `rac pack remove` keep the lockfile in sync.
+  - Pack overrides skip the lockfile entirely.
+  - `rac doctor` reports malformed lockfiles, stale entries, and (with `--frozen-lockfile`) missing entries.
+
 ## 0.3.0
 
 ### Minor Changes
