@@ -8,8 +8,10 @@ import { adapterFor, vendorManifestRelPath } from '../adapters/target-adapters.j
 import { buildRuntimeConfig } from './config-model.js';
 import type { ConfigWarning } from './config-model.js';
 import { deleteManifest, loadManifest, saveManifest } from './manifest.js';
-import { loadAgents, loadInstallSettings, loadMcps, loadPackOverrides, loadRules, loadSkills, loadVendorConfigs, resolvePackOverridePath, resolvePacks } from './parsers.js';
-import type { InstallChange, InstallManifest, InstallOptions, InstallResult, Kind, ManifestRecord, PackOverride, Scope, Target } from './types.js';
+import { findLockEntry, loadPackLock } from './pack-lock.js';
+import { loadAgents, loadInstallSettings, loadMcps, loadPackOverrides, loadProjectPackConfig, loadRules, loadSkills, loadVendorConfigs, resolvePackOverridePath, resolvePacks } from './parsers.js';
+import type { GitRunner } from './parsers.js';
+import type { InstallChange, InstallManifest, InstallOptions, InstallResult, Kind, ManifestRecord, PackLockFile, PackOverride, PackSpec, Scope, Target } from './types.js';
 import { MANAGED_JSONC_WARNING, MANAGED_MARKDOWN_WARNING, MANAGED_TOML_WARNING, resolveContainedPath, sha256 } from './util.js';
 
 export type PlannedWrite = ManifestRecord & {
@@ -685,12 +687,90 @@ export function buildOverrideWarnings(overrides: PackOverride[], projectRoot: st
   });
 }
 
-export async function doctor(cwd: string, targets: Target[] | undefined, kinds: Kind[], scope: Scope = 'project'): Promise<ConfigWarning[]> {
+export async function doctor(
+  cwd: string,
+  targets: Target[] | undefined,
+  kinds: Kind[],
+  scope: Scope = 'project',
+  opts: { frozen?: boolean; gitRunner?: GitRunner } = {},
+): Promise<ConfigWarning[]> {
   const sourceCwd = scope === 'user' ? (process.env.RAC_HOME?.trim() || os.homedir()) : cwd;
   const root = path.join(sourceCwd, '.rac');
   const installSettings = await loadInstallSettings(root);
   const resolvedTargets = targets ?? installSettings.targets ?? ALL_TARGETS;
-  const packs = await resolvePacks(sourceCwd);
+
+  const warnings: ConfigWarning[] = [];
+
+  // Lockfile diagnostics (project scope only — must run before resolvePacks so
+  // a malformed lockfile is caught here rather than thrown by resolvePacks)
+  let lockMalformedError: Error | null = null;
+  if (scope === 'project') {
+    let existingLock: PackLockFile | null = null;
+    try {
+      existingLock = await loadPackLock(root);
+    } catch (err) {
+      lockMalformedError = err instanceof Error ? err : new Error(String(err));
+    }
+
+    if (lockMalformedError !== null) {
+      // Diagnostic 1: malformed lockfile
+      warnings.push({
+        severity: 'error',
+        code: 'lockfile_malformed',
+        message: lockMalformedError.message,
+        hint: "delete .rac/rac-lock.json and run 'rac install' to regenerate",
+        context: {},
+      });
+    } else {
+      // Load project pack config and overrides for lockfile checks
+      const project = await loadProjectPackConfig(root);
+      const projectOverrides = await loadPackOverrides(root);
+      const overrideMap = new Map<string, true>();
+      for (const ov of projectOverrides) overrideMap.set(ov.id, true);
+
+      // Diagnostic 2: missing lockfile entry (frozen mode only)
+      if (opts.frozen === true) {
+        for (const spec of project.packs as PackSpec[]) {
+          if (overrideMap.has(spec.id)) continue; // overrides are excluded from lockfile
+          if (findLockEntry(existingLock, spec) === undefined) {
+            warnings.push({
+              severity: 'error',
+              code: 'missing_lockfile_entry',
+              message: `pack '${spec.id}' has no lockfile entry; run 'rac install' without --frozen-lockfile to create one`,
+              context: { pack: spec.id },
+            });
+          }
+        }
+      }
+
+      // Diagnostic 3: stale lockfile entry (always when lock is loadable and non-null)
+      if (existingLock !== null) {
+        for (const entry of existingLock.packs) {
+          const stillReferenced = (project.packs as PackSpec[]).some(
+            (spec) => spec.id === entry.id && spec.repo === entry.repo && spec.ref === entry.ref,
+          );
+          if (!stillReferenced) {
+            warnings.push({
+              severity: 'warn',
+              code: 'stale_lockfile_entry',
+              message: `stale lockfile entry: '${entry.id}' is no longer referenced by config.toml; it will be removed on the next 'rac install'`,
+              hint: undefined,
+              context: { pack: entry.id },
+            });
+          }
+        }
+      }
+    }
+  }
+
+  // Do NOT pass frozen into resolvePacks — doctor reports frozen-mode issues itself.
+  // When the lockfile is malformed, resolvePacks would also fail; skip it to avoid
+  // masking the diagnostic with an exception.
+  let packs: Awaited<ReturnType<typeof resolvePacks>> = [];
+  if (lockMalformedError === null) {
+    packs = await resolvePacks(sourceCwd, { gitRunner: opts.gitRunner });
+  }
+
   const parsedAgents = [] as Awaited<ReturnType<typeof loadAgents>>;
   const parsedSkills = [] as Awaited<ReturnType<typeof loadSkills>>;
   const parsedMcps = [] as Awaited<ReturnType<typeof loadMcps>>;
@@ -708,8 +788,6 @@ export async function doctor(cwd: string, targets: Target[] | undefined, kinds: 
   assertNoCrossPackDuplicate(parsedMcps, 'mcp');
   assertNoCrossPackDuplicate(parsedRules, 'rule');
   const config = await buildRuntimeConfig({ root, agents: parsedAgents, skills: parsedSkills, mcps: parsedMcps, rules: parsedRules, configs: parsedConfigs });
-
-  const warnings: ConfigWarning[] = [];
 
   // Emit WARN per active pack override (project scope only; user scope doesn't support packs)
   if (scope === 'project') {

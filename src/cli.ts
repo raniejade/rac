@@ -271,9 +271,10 @@ export function createProgram(): Command {
     .option('--targets <targets>', 'comma-separated: claude,codex,opencode')
     .option('--kind <kinds>', 'comma-separated: agent,skill,mcp,rule,config')
     .option('--scope <scope>', 'project|user (default project)')
-    .action(async (opts: { targets?: string; kind?: string; scope?: string }) => {
+    .option('--frozen-lockfile', 'error if any pack in config.toml lacks a lockfile entry')
+    .action(async (opts: { targets?: string; kind?: string; scope?: string; frozenLockfile?: boolean }) => {
       const mode = detectColorMode({ plainFlag: !!(program.opts() as { plain?: boolean }).plain });
-      const warnings = await doctor(process.cwd(), normalizeTargets(opts.targets), normalizeKinds(opts.kind), normalizeScope(opts.scope));
+      const warnings = await doctor(process.cwd(), normalizeTargets(opts.targets), normalizeKinds(opts.kind), normalizeScope(opts.scope), { frozen: !!opts.frozenLockfile });
       process.stdout.write(renderDoctor(warnings, mode));
       if (warnings.some((w) => w.severity === 'error')) process.exit(1);
     });
