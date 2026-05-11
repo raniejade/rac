@@ -289,6 +289,40 @@ async function setupUserScope(tmpRoot, { suffix = '', noMerge = false, preSeed =
   return { userHome, xdgConfig, cwd };
 }
 
+async function setupPackOverrideScope(tmpRoot) {
+  const proj = path.join(tmpRoot, 'override-project');
+  const pack = path.join(tmpRoot, 'override-local-pack');
+  await mkdir(proj, { recursive: true });
+  await mkdir(pack, { recursive: true });
+
+  await runCli(proj, ['init', '--empty']);
+  const gi = await readFile(path.join(proj, '.rac', '.gitignore'), 'utf8');
+  assert(gi.includes('config.local.toml'), `.gitignore: ${gi}`);
+
+  await mkdir(path.join(pack, '.rac', 'agents'), { recursive: true });
+  await writeFile(path.join(pack, '.rac', 'config.toml'), '', 'utf8');
+  await writeFile(
+    path.join(pack, '.rac', 'agents', 'override-agent.toml'),
+    'id = "override-agent"\nname = "Override Agent"\ndescription = "x."\ninstructions = "./override-agent.instructions.md"\n',
+    'utf8'
+  );
+  await writeFile(path.join(pack, '.rac', 'agents', 'override-agent.instructions.md'), 'x', 'utf8');
+  await runCli(proj, ['pack', 'add', 'demo', 'github:smoke/demo', '--ref', 'main']);
+  await runCli(proj, ['pack', 'override', 'demo', pack]);
+  const localConfig = await readFile(path.join(proj, '.rac', 'config.local.toml'), 'utf8');
+  assert(localConfig.includes('id = "demo"'), `config.local.toml missing demo id: ${localConfig}`);
+  const list = await runCli(proj, ['pack', 'list', '--plain']);
+  assert(list.stdout.includes(`(override → ${pack})`), `pack list missing override: ${list.stdout}`);
+  const doctor = await runCli(proj, ['doctor', '--plain']);
+  assert(doctor.stdout.includes('pack override active: demo →'), `doctor missing override warn: ${doctor.stdout}`);
+  const dryRun = await runCli(proj, ['install', '--dry-run', '--targets', 'claude', '--kind', 'agent', '--plain']);
+  assert(dryRun.stdout.includes('pack override active: demo →'), `install --dry-run missing override warn: ${dryRun.stdout}`);
+  await runCli(proj, ['install', '--targets', 'claude', '--kind', 'agent', '--plain']);
+  await stat(path.join(proj, '.claude', 'agents', 'override-agent.md'));
+  await runCli(proj, ['pack', 'override', 'demo', '--clear']);
+  await assertAbsent(path.join(proj, '.rac', 'config.local.toml'), '.rac/config.local.toml after clear');
+}
+
 async function main() {
   try {
     await access(cliPath);
@@ -303,34 +337,7 @@ async function main() {
   const configTargetsRepo = path.join(tmpRoot, 'config-targets-repo');
 
   try {
-    // SMOKE: pack override scenario (added by this branch)
-    {
-      const proj = path.join(tmpRoot, 'override-project');
-      const pack = path.join(tmpRoot, 'override-local-pack');
-      await mkdir(proj, { recursive: true });
-      await mkdir(path.join(pack, '.rac', 'agents'), { recursive: true });
-      await writeFile(path.join(pack, '.rac', 'config.toml'), '', 'utf8');
-      await writeFile(
-        path.join(pack, '.rac', 'agents', 'override-agent.toml'),
-        'id = "override-agent"\nname = "Override Agent"\ndescription = "x."\ninstructions = "./override-agent.instructions.md"\n',
-        'utf8'
-      );
-      await writeFile(path.join(pack, '.rac', 'agents', 'override-agent.instructions.md'), 'x', 'utf8');
-
-      await runCli(proj, ['init', '--empty']);
-      await runCli(proj, ['pack', 'add', 'demo', 'github:smoke/demo', '--ref', 'main']);
-      await runCli(proj, ['pack', 'override', 'demo', pack]);
-      const list = await runCli(proj, ['pack', 'list', '--plain']);
-      assert(list.stdout.includes(`(override → ${pack})`), `pack list missing override: ${list.stdout}`);
-      const doctor = await runCli(proj, ['doctor', '--plain']);
-      assert(doctor.stdout.includes('pack override active: demo →'), `doctor missing override warn: ${doctor.stdout}`);
-      const dryRun = await runCli(proj, ['install', '--dry-run', '--targets', 'claude', '--kind', 'agent', '--plain']);
-      assert(dryRun.stdout.includes('pack override active: demo →'), `install --dry-run missing override warn: ${dryRun.stdout}`);
-      await runCli(proj, ['install', '--targets', 'claude', '--kind', 'agent', '--plain']);
-      await stat(path.join(proj, '.claude', 'agents', 'override-agent.md'));
-      await runCli(proj, ['pack', 'override', 'demo', '--clear']);
-      await assertAbsent(path.join(proj, '.rac', 'config.local.toml'), '.rac/config.local.toml after clear');
-    }
+    await setupPackOverrideScope(tmpRoot);
 
     await setupProjectScope(sampleRepo);
     await checkHarnessOutputs(sampleRepo);
