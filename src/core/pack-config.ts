@@ -128,7 +128,7 @@ function renderPackOverrides(overrides: PackOverride[]): string {
   if (overrides.length === 0) return '';
   return overrides
     .map((o) => `[[pack_overrides]]\nid = ${tomlString(o.id)}\npath = ${tomlString(o.path)}\n`)
-    .join('\n') + '\n';
+    .join('\n');
 }
 
 export async function listProjectPackOverrides(cwd: string): Promise<PackOverride[]> {
@@ -139,20 +139,14 @@ export async function listProjectPackOverrides(cwd: string): Promise<PackOverrid
 export async function setProjectPackOverride(cwd: string, id: string, pathInput: string): Promise<void> {
   await assertConfigExists(cwd);
 
+  if (!pathInput) throw new Error(`invalid pack override path: must be a non-empty string`);
+  if (pathInput.includes('\0')) throw new Error(`invalid pack override path: must not contain NUL bytes`);
+
   const projectRoot = path.join(cwd, '.rac');
   const config = await loadProjectPackConfig(projectRoot);
   if (!config.packs.some((p) => p.id === id)) {
     throw new Error(`pack not found: ${id} (no matching [[packs]] entry)`);
   }
-
-  // Validate id shape
-  const PACK_ID_RE = /^[A-Za-z0-9._-]+$/;
-  if (!PACK_ID_RE.test(id)) throw new Error(`invalid pack id; use ASCII path-safe letters/numbers/./_/-: ${id}`);
-  if (id === 'project') throw new Error('invalid pack id; project is reserved for the local project pack');
-
-  // Validate pathInput
-  if (!pathInput) throw new Error(`invalid pack override path: must be a non-empty string`);
-  if (pathInput.includes('\0')) throw new Error(`invalid pack override path: must not contain NUL bytes`);
 
   // Resolve and stat the path
   const resolved = path.isAbsolute(pathInput) ? pathInput : path.resolve(cwd, pathInput);
@@ -192,15 +186,7 @@ export async function clearProjectPackOverride(cwd: string, id: string): Promise
   await assertConfigExists(cwd);
 
   const localPath = localConfigPathFor(cwd);
-  let existing: PackOverride[];
-  try {
-    existing = await loadPackOverrides(path.join(cwd, '.rac'));
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') throw new Error(`override not found: ${id}`);
-    throw err;
-  }
-
-  if (existing.length === 0) throw new Error(`override not found: ${id}`);
+  const existing = await loadPackOverrides(path.join(cwd, '.rac'));
   if (!existing.some((o) => o.id === id)) throw new Error(`override not found: ${id}`);
 
   const next = existing.filter((o) => o.id !== id);

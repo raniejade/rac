@@ -5,10 +5,11 @@ import { Command, InvalidArgumentError } from 'commander';
 
 import pkg from '../package.json' with { type: 'json' };
 
-import { detectColorMode, renderDiff, renderDoctor, renderEmpty, renderInstall, renderList, renderSuccess, renderUninstall, startSpinner } from './cli/output/index.js';
+import { detectColorMode, renderDiff, renderDoctor, renderEmpty, renderInstall, renderList, renderSuccess, renderUninstall, renderWarnings, startSpinner } from './cli/output/index.js';
 import { diff } from './core/diff.js';
-import { doctor, initProject, install } from './core/install.js';
+import { buildOverrideWarnings, doctor, initProject, install } from './core/install.js';
 import { addProjectPack, clearProjectPackOverride, listProjectPackOverrides, listProjectPacks, removeProjectPack, setProjectPackOverride } from './core/pack-config.js';
+import { loadPackOverrides } from './core/parsers.js';
 import type { Kind, Scope, Target } from './core/types.js';
 import { uninstall } from './core/uninstall.js';
 import { splitCsv } from './core/util.js';
@@ -75,9 +76,19 @@ export function createProgram(): Command {
     .option('--no-merge', 'bypass surgical merge of shared config files; write generated content wholesale')
     .action(async (opts: { targets?: string; kind?: string; dryRun?: boolean; summary?: boolean; clean?: boolean; check?: boolean; force?: boolean; refreshPacks?: boolean; scope?: string; noMerge?: boolean }) => {
       const cwd = process.cwd();
+      const scope = normalizeScope(opts.scope);
       const mode = detectColorMode({ plainFlag: !!(program.opts() as { plain?: boolean }).plain });
       const spinner = startSpinner('Installing…', mode);
       try {
+        // Emit WARN per active pack override before install/diff output (project scope only)
+        let overrideWarningsStr = '';
+        if (scope === 'project') {
+          const projectRoot = `${cwd}/.rac`;
+          const overrides = await loadPackOverrides(projectRoot);
+          const overrideWarnings = buildOverrideWarnings(overrides, projectRoot);
+          overrideWarningsStr = renderWarnings(overrideWarnings, mode);
+        }
+
         if (opts.dryRun) {
           // Reroute dry-run through the diff renderer for content-level diffs
           const diffResult = await diff({
@@ -85,11 +96,12 @@ export function createProgram(): Command {
             targets: normalizeTargets(opts.targets),
             kinds: normalizeKinds(opts.kind),
             refreshPacks: !!opts.refreshPacks,
-            scope: normalizeScope(opts.scope),
+            scope,
             noMerge: opts.noMerge ? true : undefined,
             detectDrift: true,
           });
           spinner.stop();
+          if (overrideWarningsStr) process.stdout.write(overrideWarningsStr);
           process.stdout.write(renderDiff(diffResult, {
             cwd,
             mode,
@@ -105,11 +117,12 @@ export function createProgram(): Command {
             check: !!opts.check,
             force: !!opts.force,
             refreshPacks: !!opts.refreshPacks,
-            scope: normalizeScope(opts.scope),
+            scope,
             noMerge: opts.noMerge ? true : undefined,
             cwd,
           });
           spinner.stop();
+          if (overrideWarningsStr) process.stdout.write(overrideWarningsStr);
           process.stdout.write(renderInstall(result, {
             cwd,
             mode,
