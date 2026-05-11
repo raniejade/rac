@@ -116,6 +116,9 @@ export async function ensureSharedPack(
     await runGit(['checkout', '--detach', 'FETCH_HEAD'], repoDir);
     const result = await runGit(['rev-parse', 'HEAD'], repoDir);
     resolvedSha = result.stdout.trim();
+    if (!/^[0-9a-f]{40}$/.test(resolvedSha)) {
+      throw new Error(`unable to resolve pack '${spec.id}': git rev-parse HEAD returned ${JSON.stringify(resolvedSha)}`);
+    }
   }
 
   const root = path.join(repoDir, '.rac');

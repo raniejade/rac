@@ -474,6 +474,120 @@ describe('resolvePacks lockfile integration', () => {
     }
   });
 
+  it('drifted entry with frozen:true: throws FrozenLockfileError mentioning is locked to, has moved upstream, and pack id', async () => {
+    const { project, cacheDir } = await makePackProject();
+    const origCache = process.env.RAC_CACHE_DIR;
+    process.env.RAC_CACHE_DIR = cacheDir;
+
+    const oldSha = 'a'.repeat(40);
+    const newSha = 'b'.repeat(40);
+
+    try {
+      // Pre-write a lockfile with oldSha
+      await writePackLock(path.join(project, '.rac'), {
+        version: 1,
+        packs: [{ id: 'alpha', repo: 'github:owner/alpha', ref: 'main', resolved: oldSha }],
+      });
+
+      // refresh:true wipes the cache; clone must recreate it so loadSharedPackConfig can succeed
+      const key = 'github:owner/alpha@main';
+      const keyHash = Buffer.from(key).toString('base64url');
+      const repoDir = path.join(cacheDir, 'packs', keyHash);
+
+      const makeRunner = (): GitRunner => {
+        const calls: { args: string[]; cwd?: string }[] = [];
+        return vi.fn(async (args: string[], cwd?: string) => {
+          calls.push({ args, cwd });
+          if (args[0] === 'clone') {
+            const target = args[2];
+            await mkdir(path.join(target, '.git'), { recursive: true });
+            await mkdir(path.join(target, '.rac'), { recursive: true });
+            await writeFile(path.join(target, '.rac/config.toml'), '', 'utf8');
+          }
+          if (args[0] === 'rev-parse') return { stdout: `${newSha}\n` };
+          return { stdout: '' };
+        }) as unknown as GitRunner;
+      };
+
+      await expect(
+        resolvePacks(project, { gitRunner: makeRunner(), refresh: true, frozen: true })
+      ).rejects.toThrow(FrozenLockfileError);
+
+      await expect(
+        resolvePacks(project, { gitRunner: makeRunner(), refresh: true, frozen: true })
+      ).rejects.toThrow(/is locked to/);
+
+      await expect(
+        resolvePacks(project, { gitRunner: makeRunner(), refresh: true, frozen: true })
+      ).rejects.toThrow(/has moved upstream/);
+
+      await expect(
+        resolvePacks(project, { gitRunner: makeRunner(), refresh: true, frozen: true })
+      ).rejects.toThrow(/alpha/);
+
+      // Suppress unused variable lint
+      void repoDir;
+    } finally {
+      process.env.RAC_CACHE_DIR = origCache;
+    }
+  });
+
+  it('frozen:true with stale-only change: does not throw and does not write lockfile', async () => {
+    const project = await makeTmp();
+    const cacheDir = await makeTmp();
+    const origCache = process.env.RAC_CACHE_DIR;
+    process.env.RAC_CACHE_DIR = cacheDir;
+
+    try {
+      // config.toml has only pack X; lockfile has both X and Y (Y is stale)
+      await mkdir(path.join(project, '.rac'), { recursive: true });
+      await writeFile(
+        path.join(project, '.rac/config.toml'),
+        '[[packs]]\nid = "x"\nrepo = "github:owner/x"\nref = "main"\n',
+        'utf8'
+      );
+
+      const xSha = 'c'.repeat(40);
+      const ySha = 'd'.repeat(40);
+
+      await writePackLock(path.join(project, '.rac'), {
+        version: 1,
+        packs: [
+          { id: 'x', repo: 'github:owner/x', ref: 'main', resolved: xSha },
+          { id: 'y', repo: 'github:owner/y', ref: 'main', resolved: ySha },
+        ],
+      });
+
+      // Capture the file contents before the call
+      const lockBefore = await readFile(path.join(project, '.rac', 'rac-lock.json'), 'utf8');
+
+      // Set up fake cache for X
+      const key = 'github:owner/x@main';
+      const keyHash = Buffer.from(key).toString('base64url');
+      const repoDir = path.join(cacheDir, 'packs', keyHash);
+      await mkdir(path.join(repoDir, '.git'), { recursive: true });
+      await mkdir(path.join(repoDir, '.rac'), { recursive: true });
+      await writeFile(path.join(repoDir, '.rac/config.toml'), '', 'utf8');
+
+      // Runner uses locked SHA path (no rev-parse needed since X is in the lockfile)
+      const runner = makeRunner({});
+
+      // Should not throw (stale Y entry is not a frozen violation)
+      await expect(
+        resolvePacks(project, { gitRunner: runner, frozen: true })
+      ).resolves.toBeDefined();
+
+      // Lockfile should not have been rewritten; Y entry still present
+      const lockAfter = await readFile(path.join(project, '.rac', 'rac-lock.json'), 'utf8');
+      expect(lockAfter).toBe(lockBefore);
+
+      const lock = await loadPackLock(path.join(project, '.rac'));
+      expect(lock!.packs.map((p) => p.id).sort()).toContain('y');
+    } finally {
+      process.env.RAC_CACHE_DIR = origCache;
+    }
+  });
+
   it('pack removed from config: stale lockfile entry cleaned up; no error thrown', async () => {
     const project = await makeTmp();
     const cacheDir = await makeTmp();

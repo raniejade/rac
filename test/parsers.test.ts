@@ -500,7 +500,8 @@ describe('resolvePacks with overrides', () => {
       const gitCalls: string[][] = [];
       const gitRunner: GitRunner = vi.fn().mockImplementation(async (args: string[]) => {
         gitCalls.push(args);
-        // fetch and checkout succeed silently
+        // rev-parse HEAD returns a plausible SHA; fetch and checkout succeed silently
+        if (args[0] === 'rev-parse') return { stdout: '0000000000000000000000000000000000000001\n' };
         return { stdout: '' };
       });
 
@@ -544,7 +545,11 @@ describe('resolvePacks with overrides', () => {
       await mkdir(path.join(repoDir, '.rac'), { recursive: true });
       await writeFile(path.join(repoDir, '.rac/config.toml'), '', 'utf8');
 
-      const gitRunner: GitRunner = vi.fn().mockImplementation(async () => ({ stdout: '' }));
+      const gitRunner: GitRunner = vi.fn().mockImplementation(async (args: string[]) => {
+        // rev-parse HEAD returns a plausible SHA; other git calls succeed silently
+        if (args[0] === 'rev-parse') return { stdout: '0000000000000000000000000000000000000002\n' };
+        return { stdout: '' };
+      });
 
       const result = await resolvePacks(project, { gitRunner });
 
