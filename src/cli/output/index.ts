@@ -3,6 +3,7 @@ export {
   type ConfigWarningView,
   type WarningSeverity,
   renderDoctor,
+  renderWarnings,
 } from './doctor.js';
 export {
   type DiffEntryView,

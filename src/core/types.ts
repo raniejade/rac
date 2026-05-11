@@ -136,11 +136,17 @@ export type PackSpec = {
   ref: string;
 };
 
+export type PackOverride = {
+  id: string;
+  path: string;
+};
+
 export type PackRuntime = {
   id: string;
   root: string;
   sourceRepo?: string;
   sourceRef?: string;
+  override?: { path: string };
 };
 
 export type UninstallOptions = {

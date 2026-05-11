@@ -232,6 +232,56 @@ ref = "main"
 - RAC resolves shared packs with system `git` into cache (`$RAC_CACHE_DIR` or `~/.cache/rac`), then checks out `--detach <ref>`.
 - Shared packs can provide definitions but cannot define transitive `[[packs]]`.
 
+## Local Pack Overrides
+
+During development, you can redirect any declared pack to a local checkout without committing or pushing changes. This lets you iterate on a pack definition and see the effects immediately in `rac install` or `rac doctor`.
+
+The override lives in `.rac/config.local.toml`, which **must be gitignored**. `rac init` automatically adds `config.local.toml` to `.rac/.gitignore`. For existing projects, add it manually:
+
+```
+# .rac/.gitignore
+config.local.toml
+```
+
+### Schema
+
+```toml
+[[pack_overrides]]
+id = "platform-rules"      # must match an existing [[packs]] entry's id
+path = "../platform-pack"  # relative resolves against project root (the dir containing .rac/)
+```
+
+Rules:
+
+- `id` must match an existing `[[packs]]` entry. An override only redirects an already-declared pack; it cannot introduce a new one.
+- `path` is a directory that contains `.rac/config.toml` (the same shape as a GitHub-cloned pack).
+- Relative paths resolve against the project root (the directory containing `.rac/`), **not** against `.rac/` itself.
+- `[[packs]]` is not allowed inside the local pack — the same constraint as a regular shared pack.
+- At most one override per id; duplicates are an error.
+
+### Visibility
+
+`rac doctor` emits one `WARN`-severity entry per active override. `rac install` emits the same warning before any diff or install output. Both still exit 0 — overrides are intentional, just risky to forget.
+
+```
+WARN  pack override active: platform-rules → /Users/dev/work/platform-pack
+      hint: remove via `rac pack override --clear platform-rules` before publishing
+```
+
+The arrow shows the resolved absolute path, regardless of whether `path` is configured as a relative or absolute string in `config.local.toml`.
+
+### `--refresh-packs`
+
+`--refresh-packs` is a no-op for overridden packs — there is no cache entry to refresh.
+
+### Cleanup
+
+```bash
+rac pack override --clear platform-rules
+```
+
+Removes the entry from `.rac/config.local.toml`. The file is deleted automatically when the last entry is cleared.
+
 ## Install Behavior
 
 ### Targets
@@ -342,8 +392,15 @@ List configured packs in config order.
 rac pack list
 ```
 
-- Output format: `<id> <repo> <ref>` on each line.
+- Output format: `<id> <repo> <ref>` on each line. When a local override is active for a pack, the right column includes `(override → <path>)`.
 - Prints `-` when no packs are configured.
+
+Example output with an active override:
+
+```
+alpha           github:owner/alpha @ main
+platform-rules  github:org/platform @ main  (override → ../platform-pack)
+```
 
 ### `pack remove`
 
@@ -352,6 +409,21 @@ Remove a top-level `[[packs]]` entry by id from the current project's `.rac/conf
 ```bash
 rac pack remove <id>
 ```
+
+### `pack override`
+
+Add, replace, or clear a local pack override in `.rac/config.local.toml`.
+
+```bash
+rac pack override <id> <path>
+rac pack override <id> --clear
+```
+
+- Validates that `<id>` matches a configured `[[packs]]` entry and that `<path>` is a directory containing `.rac/config.toml`.
+- Replaces an existing override for the same id; appends otherwise.
+- `--clear` removes the override entry. `--clear` together with `<path>` is an error.
+- The file is deleted automatically when the last entry is cleared.
+- Writes or edits `.rac/config.local.toml`.
 
 ### `uninstall`
 

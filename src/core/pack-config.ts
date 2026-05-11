@@ -1,10 +1,10 @@
-import { readFile, stat, writeFile } from 'node:fs/promises';
+import { readFile, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { parse } from 'smol-toml';
 
-import { loadProjectPackConfig, validatePackSpec } from './parsers.js';
-import type { PackSpec } from './types.js';
+import { loadPackOverrides, loadProjectPackConfig, validatePackSpec } from './parsers.js';
+import type { PackOverride, PackSpec } from './types.js';
 
 function configPathFor(cwd: string): string {
   return path.join(cwd, '.rac', 'config.toml');
@@ -116,4 +116,83 @@ export async function removeProjectPack(cwd: string, packId: string): Promise<vo
 
   const next = removeBlockWithLocalSeparator(raw, target.start, target.end);
   await writeFile(configPath, next, 'utf8');
+}
+
+const LOCAL_CONFIG_FILE = 'config.local.toml';
+
+function localConfigPathFor(cwd: string): string {
+  return path.join(cwd, '.rac', LOCAL_CONFIG_FILE);
+}
+
+function renderPackOverrides(overrides: PackOverride[]): string {
+  if (overrides.length === 0) return '';
+  return overrides
+    .map((o) => `[[pack_overrides]]\nid = ${tomlString(o.id)}\npath = ${tomlString(o.path)}\n`)
+    .join('\n');
+}
+
+export async function listProjectPackOverrides(cwd: string): Promise<PackOverride[]> {
+  await assertConfigExists(cwd);
+  return loadPackOverrides(path.join(cwd, '.rac'));
+}
+
+export async function setProjectPackOverride(cwd: string, id: string, pathInput: string): Promise<void> {
+  await assertConfigExists(cwd);
+
+  if (!pathInput) throw new Error(`invalid pack override path: must be a non-empty string`);
+  if (pathInput.includes('\0')) throw new Error(`invalid pack override path: must not contain NUL bytes`);
+
+  const projectRoot = path.join(cwd, '.rac');
+  const config = await loadProjectPackConfig(projectRoot);
+  if (!config.packs.some((p) => p.id === id)) {
+    throw new Error(`pack not found: ${id} (no matching [[packs]] entry)`);
+  }
+
+  // Resolve and stat the path
+  const resolved = path.isAbsolute(pathInput) ? pathInput : path.resolve(cwd, pathInput);
+  let dirStat: Awaited<ReturnType<typeof stat>>;
+  try {
+    dirStat = await stat(resolved);
+  } catch {
+    throw new Error(`pack override path does not exist: ${id} → ${resolved}`);
+  }
+  if (!dirStat.isDirectory()) throw new Error(`pack override path is not a directory: ${id} → ${resolved}`);
+
+  const innerConfig = path.join(resolved, '.rac', 'config.toml');
+  try {
+    await stat(innerConfig);
+  } catch {
+    throw new Error(`pack override path missing .rac/config.toml: ${id} → ${resolved} (expected ${innerConfig})`);
+  }
+
+  // Read existing overrides
+  const existing = await loadPackOverrides(projectRoot);
+
+  // Build new overrides list: replace existing entry with same id or append
+  let replaced = false;
+  const next: PackOverride[] = existing.map((o) => {
+    if (o.id === id) {
+      replaced = true;
+      return { id, path: pathInput };
+    }
+    return o;
+  });
+  if (!replaced) next.push({ id, path: pathInput });
+
+  await writeFile(localConfigPathFor(cwd), renderPackOverrides(next), 'utf8');
+}
+
+export async function clearProjectPackOverride(cwd: string, id: string): Promise<void> {
+  await assertConfigExists(cwd);
+
+  const localPath = localConfigPathFor(cwd);
+  const existing = await loadPackOverrides(path.join(cwd, '.rac'));
+  if (!existing.some((o) => o.id === id)) throw new Error(`override not found: ${id}`);
+
+  const next = existing.filter((o) => o.id !== id);
+  if (next.length === 0) {
+    await unlink(localPath);
+  } else {
+    await writeFile(localPath, renderPackOverrides(next), 'utf8');
+  }
 }

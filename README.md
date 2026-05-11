@@ -64,6 +64,8 @@ npx @raniejade/rac install --refresh-packs --dry-run
 
 Pack commands edit the current project's `.rac/config.toml`.
 
+For iterating on a pack locally, see [Local Pack Overrides](docs/configuration.md#local-pack-overrides) — a developer-only redirect via `.rac/config.local.toml`.
+
 ## Docs
 
 - [Install Scopes](docs/install-scopes.md): project scope, user scope, dotfiles workflow, and output paths.

@@ -926,6 +926,39 @@ describe('install + doctor', () => {
     expect(await readFile(path.join(root, '.rac/config.toml'), 'utf8')).toContain('id = "shared"');
   });
 
+  it('init creates .rac/.gitignore containing config.local.toml', async () => {
+    const root = await makeTmp();
+    await initProject(root, true);
+    const gitignorePath = path.join(root, '.rac/.gitignore');
+    await expect(stat(gitignorePath)).resolves.toBeTruthy();
+    const content = await readFile(gitignorePath, 'utf8');
+    expect(content).toContain('config.local.toml');
+  });
+
+  it('init does not duplicate config.local.toml in .rac/.gitignore on repeated runs', async () => {
+    const root = await makeTmp();
+    await initProject(root, true);
+    await initProject(root, true);
+    const content = await readFile(path.join(root, '.rac/.gitignore'), 'utf8');
+    const matches = content.split('\n').filter(line => line === 'config.local.toml');
+    expect(matches).toHaveLength(1);
+  });
+
+  it('init preserves existing lines in .rac/.gitignore and appends config.local.toml', async () => {
+    const root = await makeTmp();
+    // Pre-create .rac dir and a .gitignore with custom content
+    await mkdir(path.join(root, '.rac'), { recursive: true });
+    await writeFile(path.join(root, '.rac/.gitignore'), '*.log\nlocal-secrets.toml\n', 'utf8');
+    await initProject(root, true);
+    const content = await readFile(path.join(root, '.rac/.gitignore'), 'utf8');
+    expect(content).toContain('*.log');
+    expect(content).toContain('local-secrets.toml');
+    expect(content).toContain('config.local.toml');
+    // Ensure config.local.toml appears exactly once
+    const matches = content.split('\n').filter(line => line === 'config.local.toml');
+    expect(matches).toHaveLength(1);
+  });
+
   it('requires project .rac/config.toml and validates packs config', async () => {
     const root = await makeTmp();
     await mkdir(path.join(root, '.rac/agents'), { recursive: true });
@@ -1226,5 +1259,127 @@ describe('install + doctor', () => {
     expect(result.stdout).toContain('@@');
     // Should contain the (dry-run) label
     expect(result.stdout).toContain('(dry-run)');
+  });
+});
+
+describe('install: pack override warnings', () => {
+  async function makeOverridePack(packDir: string, agentId: string): Promise<void> {
+    await mkdir(path.join(packDir, '.rac/agents'), { recursive: true });
+    await writeFile(path.join(packDir, '.rac/config.toml'), '', 'utf8');
+    await writeFile(
+      path.join(packDir, `.rac/agents/${agentId}.toml`),
+      `id = "${agentId}"\ninstructions = "./${agentId}.md"\n`,
+      'utf8'
+    );
+    await writeFile(
+      path.join(packDir, `.rac/agents/${agentId}.md`),
+      `# ${agentId}\nAgent from override pack.\n`,
+      'utf8'
+    );
+  }
+
+  async function setupProjectWithOverride(root: string, packDir: string, packId: string): Promise<void> {
+    await mkdir(path.join(root, '.rac/agents'), { recursive: true });
+    await writeFile(
+      path.join(root, '.rac/config.toml'),
+      `[[packs]]\nid = "${packId}"\nrepo = "github:owner/${packId}"\nref = "main"\n`,
+      'utf8'
+    );
+    await writeFile(
+      path.join(root, '.rac/config.local.toml'),
+      `[[pack_overrides]]\nid = "${packId}"\npath = ${JSON.stringify(packDir)}\n`,
+      'utf8'
+    );
+  }
+
+  it('install --dry-run with override: warns with correct message before diff output, exit 0, git not called', async () => {
+    const root = await makeTmp();
+    const packDir = await makeTmp();
+    await makeOverridePack(packDir, 'override-agent');
+    await setupProjectWithOverride(root, packDir, 'mypkg');
+
+    const result = await runCliInProcess(root, ['install', '--dry-run', '--targets', 'claude', '--kind', 'agent', '--plain']);
+
+    expect(result.status).toBe(0);
+    // Warning appears before the diff output
+    expect(result.stdout).toContain('pack override active: mypkg →');
+    expect(result.stdout).toContain(packDir);
+    expect(result.stdout).toContain('rac pack override --clear mypkg');
+    expect(result.stdout).toContain('before publishing');
+    // The warning should appear BEFORE the plan summary line
+    const warnIdx = result.stdout.indexOf('pack override active:');
+    const planIdx = result.stdout.indexOf('Plan:');
+    expect(warnIdx).toBeGreaterThanOrEqual(0);
+    expect(planIdx).toBeGreaterThanOrEqual(0);
+    expect(warnIdx).toBeLessThan(planIdx);
+    // The agent from the override pack appears in the planned output
+    expect(result.stdout).toContain('override-agent');
+  });
+
+  it('install (non-dry-run) with override: warning appears before install output, agent is written, exit 0', async () => {
+    const root = await makeTmp();
+    const packDir = await makeTmp();
+    await makeOverridePack(packDir, 'override-agent');
+    await setupProjectWithOverride(root, packDir, 'mypkg');
+
+    // Run install via runCliInProcess since it captures stdout
+    const result = await runCliInProcess(root, ['install', '--targets', 'claude', '--kind', 'agent', '--plain']);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('pack override active: mypkg →');
+    expect(result.stdout).toContain('rac pack override --clear mypkg');
+
+    // The warning should appear BEFORE the install summary output
+    const warnIdx = result.stdout.indexOf('pack override active:');
+    const summaryIdx = result.stdout.search(/Installed|Updated|Created|create:|update:/i);
+    expect(warnIdx).toBeGreaterThanOrEqual(0);
+    expect(summaryIdx).toBeGreaterThanOrEqual(0);
+    expect(warnIdx).toBeLessThan(summaryIdx);
+
+    // Confirm the agent from the override pack was actually written
+    const agentPath = path.join(root, '.claude/agents/override-agent.md');
+    await expect(stat(agentPath)).resolves.toBeTruthy();
+    const content = await readFile(agentPath, 'utf8');
+    expect(content).toContain('Agent from override pack.');
+  });
+
+  it('install --check with override: warning appears, exit 0 when up-to-date', async () => {
+    const root = await makeTmp();
+    const packDir = await makeTmp();
+    await makeOverridePack(packDir, 'override-agent');
+    await setupProjectWithOverride(root, packDir, 'mypkg');
+
+    // Bring the tree up-to-date first
+    const setup = await runCliInProcess(root, ['install', '--targets', 'claude', '--kind', 'agent', '--plain']);
+    expect(setup.status).toBe(0);
+
+    const check = await runCliInProcess(root, ['install', '--check', '--targets', 'claude', '--kind', 'agent', '--plain']);
+    expect(check.status).toBe(0);
+    expect(check.stdout).toContain('pack override active: mypkg →');
+    expect(check.stdout).toContain('rac pack override --clear mypkg');
+  });
+
+  it('install with no overrides: no override warning in output', async () => {
+    const root = await makeTmp();
+    await seed(root);
+
+    const result = await runCliInProcess(root, ['install', '--dry-run', '--targets', 'claude', '--kind', 'agent', '--plain']);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).not.toContain('pack override active:');
+    expect(result.stdout).not.toContain('pack_override_active');
+  });
+
+  it('install with override: warning severity badge WARN appears in output', async () => {
+    const root = await makeTmp();
+    const packDir = await makeTmp();
+    await makeOverridePack(packDir, 'override-agent');
+    await setupProjectWithOverride(root, packDir, 'mypkg');
+
+    const result = await runCliInProcess(root, ['install', '--dry-run', '--targets', 'claude', '--kind', 'agent', '--plain']);
+
+    expect(result.status).toBe(0);
+    // plain mode: badge renders as 'WARN '
+    expect(result.stdout).toContain('WARN ');
   });
 });

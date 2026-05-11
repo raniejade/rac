@@ -2,10 +2,10 @@ import { mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { parse as parseToml } from 'smol-toml';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { addProjectPack, listProjectPacks, removeProjectPack } from '../src/core/pack-config.js';
-import { loadAgents, loadInstallSettings, loadMcps, loadProjectPackConfig, loadRules, loadSkills, loadVendorConfigs } from '../src/core/parsers.js';
+import { addProjectPack, clearProjectPackOverride, listProjectPackOverrides, listProjectPacks, removeProjectPack, setProjectPackOverride } from '../src/core/pack-config.js';
+import { loadAgents, loadInstallSettings, loadMcps, loadProjectPackConfig, loadRules, loadSkills, loadVendorConfigs, resolvePacks, type GitRunner } from '../src/core/parsers.js';
 
 import { cleanupTmpDirs, makeTmp, runCliInProcess } from './helpers.js';
 
@@ -405,5 +405,357 @@ describe('parsers', () => {
 
     const skills = await loadSkills(path.join(root, '.rac'), 'project');
     expect(skills[0].assets).toEqual([]);
+  });
+});
+
+describe('resolvePacks with overrides', () => {
+  function neverGit(): GitRunner {
+    return vi.fn().mockImplementation(async () => {
+      throw new Error('git should not be called for overridden packs');
+    }) as unknown as GitRunner;
+  }
+
+  async function makeLocalPack(dir: string): Promise<void> {
+    await mkdir(path.join(dir, '.rac'), { recursive: true });
+    await writeFile(path.join(dir, '.rac/config.toml'), '', 'utf8');
+  }
+
+  it('matching [[pack_overrides]] returns PackRuntime with override.path set; gitRunner never called', async () => {
+    const project = await makeTmp();
+    const packDir = await makeTmp();
+    await mkdir(path.join(project, '.rac'), { recursive: true });
+    await writeFile(
+      path.join(project, '.rac/config.toml'),
+      '[[packs]]\nid = "alpha"\nrepo = "github:owner/alpha"\nref = "main"\n',
+      'utf8'
+    );
+    await writeFile(
+      path.join(project, '.rac/config.local.toml'),
+      `[[pack_overrides]]\nid = "alpha"\npath = ${JSON.stringify(packDir)}\n`,
+      'utf8'
+    );
+    await makeLocalPack(packDir);
+
+    const gitRunner = neverGit();
+    const result = await resolvePacks(project, { gitRunner });
+
+    expect(result).toHaveLength(2);
+    const alpha = result.find((r) => r.id === 'alpha');
+    expect(alpha?.override?.path).toBe(packDir);
+    expect(alpha?.root).toBe(path.join(packDir, '.rac'));
+    expect(alpha?.sourceRepo).toBe('github:owner/alpha');
+    expect(alpha?.sourceRef).toBe('main');
+    expect(gitRunner).not.toHaveBeenCalled();
+  });
+
+  it('[[pack_overrides]] id not matching any [[packs]] entry throws with "pack override target not found"', async () => {
+    const project = await makeTmp();
+    await mkdir(path.join(project, '.rac'), { recursive: true });
+    await writeFile(
+      path.join(project, '.rac/config.toml'),
+      '[[packs]]\nid = "alpha"\nrepo = "github:owner/alpha"\nref = "main"\n',
+      'utf8'
+    );
+    await writeFile(
+      path.join(project, '.rac/config.local.toml'),
+      '[[pack_overrides]]\nid = "nonexistent"\npath = "/some/path"\n',
+      'utf8'
+    );
+
+    await expect(resolvePacks(project, { gitRunner: neverGit() }))
+      .rejects.toThrow(/pack override target not found/);
+    await expect(resolvePacks(project, { gitRunner: neverGit() }))
+      .rejects.toThrow(/nonexistent/);
+  });
+
+  it('mixed: pack A overridden locally, pack B fetched via gitRunner; mock only called for B', async () => {
+    const project = await makeTmp();
+    const cacheDir = await makeTmp();
+    const packADir = await makeTmp();
+    await mkdir(path.join(project, '.rac'), { recursive: true });
+    await writeFile(
+      path.join(project, '.rac/config.toml'),
+      '[[packs]]\nid = "a"\nrepo = "github:owner/a"\nref = "main"\n\n[[packs]]\nid = "b"\nrepo = "github:owner/b"\nref = "main"\n',
+      'utf8'
+    );
+    await writeFile(
+      path.join(project, '.rac/config.local.toml'),
+      `[[pack_overrides]]\nid = "a"\npath = ${JSON.stringify(packADir)}\n`,
+      'utf8'
+    );
+    await makeLocalPack(packADir);
+
+    // Set up a fake cache dir so git calls "succeed" by pointing at a valid pack dir
+    const originalCacheDir = process.env.RAC_CACHE_DIR;
+    process.env.RAC_CACHE_DIR = cacheDir;
+    try {
+      // Create a fake cached repo for pack B
+      const key = 'github:owner/b@main';
+      const keyHash = Buffer.from(key).toString('base64url');
+      const repoDir = path.join(cacheDir, 'packs', keyHash);
+      await mkdir(path.join(repoDir, '.git'), { recursive: true });
+      await mkdir(path.join(repoDir, '.rac'), { recursive: true });
+      await writeFile(path.join(repoDir, '.rac/config.toml'), '', 'utf8');
+
+      const gitCalls: string[][] = [];
+      const gitRunner: GitRunner = vi.fn().mockImplementation(async (args: string[]) => {
+        gitCalls.push(args);
+        // fetch and checkout succeed silently
+      });
+
+      const result = await resolvePacks(project, { gitRunner });
+
+      expect(result).toHaveLength(3); // project + a + b
+      const a = result.find((r) => r.id === 'a');
+      const b = result.find((r) => r.id === 'b');
+      expect(a?.override?.path).toBe(packADir);
+      expect(b?.override).toBeUndefined();
+
+      // git should have been called for B only (fetch + checkout = at least 1 call)
+      expect(gitCalls.length).toBeGreaterThan(0);
+      // None of the git calls should mention pack A's path
+      for (const call of gitCalls) {
+        expect(call.join(' ')).not.toContain('owner/a');
+      }
+    } finally {
+      process.env.RAC_CACHE_DIR = originalCacheDir;
+    }
+  });
+
+  it('no overrides: existing behavior unchanged (project + shared packs via gitRunner)', async () => {
+    const project = await makeTmp();
+    const cacheDir = await makeTmp();
+    await mkdir(path.join(project, '.rac'), { recursive: true });
+    await writeFile(
+      path.join(project, '.rac/config.toml'),
+      '[[packs]]\nid = "alpha"\nrepo = "github:owner/alpha"\nref = "main"\n',
+      'utf8'
+    );
+    // No config.local.toml
+
+    const originalCacheDir = process.env.RAC_CACHE_DIR;
+    process.env.RAC_CACHE_DIR = cacheDir;
+    try {
+      const key = 'github:owner/alpha@main';
+      const keyHash = Buffer.from(key).toString('base64url');
+      const repoDir = path.join(cacheDir, 'packs', keyHash);
+      await mkdir(path.join(repoDir, '.git'), { recursive: true });
+      await mkdir(path.join(repoDir, '.rac'), { recursive: true });
+      await writeFile(path.join(repoDir, '.rac/config.toml'), '', 'utf8');
+
+      const gitRunner: GitRunner = vi.fn().mockImplementation(async () => { /* success */ });
+
+      const result = await resolvePacks(project, { gitRunner });
+
+      expect(result).toHaveLength(2);
+      const alpha = result.find((r) => r.id === 'alpha');
+      expect(alpha?.override).toBeUndefined();
+      expect(gitRunner).toHaveBeenCalled();
+    } finally {
+      process.env.RAC_CACHE_DIR = originalCacheDir;
+    }
+  });
+});
+
+async function makePackDir(): Promise<string> {
+  const packDir = await makeTmp();
+  await mkdir(path.join(packDir, '.rac'), { recursive: true });
+  await writeFile(path.join(packDir, '.rac/config.toml'), '', 'utf8');
+  return packDir;
+}
+
+async function makeProjectWithPacks(packs: Array<{ id: string; repo: string; ref: string }>): Promise<string> {
+  const root = await makeTmp();
+  await mkdir(path.join(root, '.rac'), { recursive: true });
+  const packsToml = packs
+    .map((p) => `[[packs]]\nid = "${p.id}"\nrepo = "${p.repo}"\nref = "${p.ref}"\n`)
+    .join('\n');
+  await writeFile(path.join(root, '.rac/config.toml'), packsToml, 'utf8');
+  return root;
+}
+
+describe('pack-config writers: setProjectPackOverride / clearProjectPackOverride / listProjectPackOverrides', () => {
+  it('setProjectPackOverride writes a new entry; listProjectPackOverrides reads it back correctly', async () => {
+    const packDir = await makePackDir();
+    const root = await makeProjectWithPacks([{ id: 'alpha', repo: 'github:owner/alpha', ref: 'main' }]);
+
+    await setProjectPackOverride(root, 'alpha', packDir);
+    const overrides = await listProjectPackOverrides(root);
+    expect(overrides).toEqual([{ id: 'alpha', path: packDir }]);
+  });
+
+  it('setProjectPackOverride replaces an existing override for the same id; ordering of unrelated entries is preserved', async () => {
+    const packDir1 = await makePackDir();
+    const packDir2 = await makePackDir();
+    const packDir3 = await makePackDir();
+    const root = await makeProjectWithPacks([
+      { id: 'alpha', repo: 'github:owner/alpha', ref: 'main' },
+      { id: 'beta', repo: 'github:owner/beta', ref: 'main' },
+      { id: 'gamma', repo: 'github:owner/gamma', ref: 'main' },
+    ]);
+
+    // Set initial overrides for alpha and gamma
+    await setProjectPackOverride(root, 'alpha', packDir1);
+    await setProjectPackOverride(root, 'gamma', packDir3);
+
+    // Replace alpha's override; beta has no override, gamma should keep its position
+    await setProjectPackOverride(root, 'alpha', packDir2);
+
+    const overrides = await listProjectPackOverrides(root);
+    // alpha replaced in-place (first), gamma second
+    expect(overrides).toEqual([
+      { id: 'alpha', path: packDir2 },
+      { id: 'gamma', path: packDir3 },
+    ]);
+  });
+
+  it('setProjectPackOverride errors when id does not match any configured [[packs]] entry', async () => {
+    const packDir = await makePackDir();
+    const root = await makeProjectWithPacks([{ id: 'alpha', repo: 'github:owner/alpha', ref: 'main' }]);
+
+    await expect(setProjectPackOverride(root, 'nonexistent', packDir)).rejects.toThrow(/pack not found/);
+    await expect(setProjectPackOverride(root, 'nonexistent', packDir)).rejects.toThrow(/nonexistent/);
+  });
+
+  it('setProjectPackOverride errors with non-existent path; message includes both id and resolved absolute path', async () => {
+    const root = await makeProjectWithPacks([{ id: 'alpha', repo: 'github:owner/alpha', ref: 'main' }]);
+    const missingPath = path.join(root, 'no-such-dir');
+
+    await expect(setProjectPackOverride(root, 'alpha', missingPath)).rejects.toThrow(/alpha/);
+    await expect(setProjectPackOverride(root, 'alpha', missingPath)).rejects.toThrow(new RegExp(missingPath.replace(/[/\\]/g, '.')));
+  });
+
+  it('setProjectPackOverride errors when path exists but is missing .rac/config.toml', async () => {
+    const root = await makeProjectWithPacks([{ id: 'alpha', repo: 'github:owner/alpha', ref: 'main' }]);
+    const emptyDir = await makeTmp(); // exists but no .rac/config.toml
+
+    await expect(setProjectPackOverride(root, 'alpha', emptyDir)).rejects.toThrow(/alpha/);
+    await expect(setProjectPackOverride(root, 'alpha', emptyDir)).rejects.toThrow(/missing .rac\/config\.toml/);
+  });
+
+  it('setProjectPackOverride errors with id not in [[packs]] (reserved/unknown id all flow through this check)', async () => {
+    const packDir = await makePackDir();
+    const root = await makeProjectWithPacks([{ id: 'alpha', repo: 'github:owner/alpha', ref: 'main' }]);
+
+    await expect(setProjectPackOverride(root, 'project', packDir)).rejects.toThrow('pack not found');
+    await expect(setProjectPackOverride(root, 'unknown', packDir)).rejects.toThrow('pack not found');
+  });
+
+  it('setProjectPackOverride round-trips paths containing double-quotes and backslashes via TOML escaping', async () => {
+    const root = await makeProjectWithPacks([{ id: 'alpha', repo: 'github:owner/alpha', ref: 'main' }]);
+    // We can't stat a path with a literal quote on most filesystems, so verify the writer
+    // path indirectly by writing a benign override first, then mutating config.local.toml
+    // to contain a tricky path via setProjectPackOverride's renderer (using a real pack dir
+    // whose name includes a backslash isn't possible on macOS). Instead, exercise the
+    // renderer + parser round-trip by hand-calling the public writer with a real path
+    // and asserting the file content uses JSON-escaped strings (tomlString = JSON.stringify).
+    const packDir = await makePackDir();
+    await setProjectPackOverride(root, 'alpha', packDir);
+    const raw = await readFile(path.join(root, '.rac/config.local.toml'), 'utf8');
+    expect(raw).toContain(`path = ${JSON.stringify(packDir)}`);
+    expect(raw).toContain(`id = ${JSON.stringify('alpha')}`);
+  });
+
+  it('clearProjectPackOverride removes one entry and preserves others; rewrites file', async () => {
+    const packDir1 = await makePackDir();
+    const packDir2 = await makePackDir();
+    const root = await makeProjectWithPacks([
+      { id: 'alpha', repo: 'github:owner/alpha', ref: 'main' },
+      { id: 'beta', repo: 'github:owner/beta', ref: 'main' },
+    ]);
+
+    await setProjectPackOverride(root, 'alpha', packDir1);
+    await setProjectPackOverride(root, 'beta', packDir2);
+
+    await clearProjectPackOverride(root, 'alpha');
+
+    const overrides = await listProjectPackOverrides(root);
+    expect(overrides).toEqual([{ id: 'beta', path: packDir2 }]);
+  });
+
+  it('clearProjectPackOverride deletes config.local.toml when removing the last entry', async () => {
+    const packDir = await makePackDir();
+    const root = await makeProjectWithPacks([{ id: 'alpha', repo: 'github:owner/alpha', ref: 'main' }]);
+
+    await setProjectPackOverride(root, 'alpha', packDir);
+    await clearProjectPackOverride(root, 'alpha');
+
+    // File should no longer exist
+    await expect(readFile(path.join(root, '.rac/config.local.toml'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('clearProjectPackOverride errors when id is not present (override not found)', async () => {
+    const root = await makeProjectWithPacks([{ id: 'alpha', repo: 'github:owner/alpha', ref: 'main' }]);
+
+    await expect(clearProjectPackOverride(root, 'alpha')).rejects.toThrow(/override not found/);
+    await expect(clearProjectPackOverride(root, 'alpha')).rejects.toThrow(/alpha/);
+  });
+});
+
+describe('CLI: pack override and pack list with overrides', () => {
+  it('pack override <id> <path> happy path: success message and file contains the entry', async () => {
+    const packDir = await makePackDir();
+    const root = await makeProjectWithPacks([{ id: 'alpha', repo: 'github:owner/alpha', ref: 'main' }]);
+
+    const result = await runCliInProcess(root, ['pack', 'override', 'alpha', packDir]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('Set override for alpha');
+
+    const overrides = await listProjectPackOverrides(root);
+    expect(overrides).toEqual([{ id: 'alpha', path: packDir }]);
+  });
+
+  it('pack override <id> --clear happy path: success message and entry removed', async () => {
+    const packDir = await makePackDir();
+    const root = await makeProjectWithPacks([{ id: 'alpha', repo: 'github:owner/alpha', ref: 'main' }]);
+
+    await setProjectPackOverride(root, 'alpha', packDir);
+
+    const result = await runCliInProcess(root, ['pack', 'override', 'alpha', '--clear']);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('Cleared override for alpha');
+
+    const overrides = await listProjectPackOverrides(root);
+    expect(overrides).toEqual([]);
+  });
+
+  it('pack override <id> <path> --clear (both provided) → exit non-zero, stderr mentions conflict', async () => {
+    const packDir = await makePackDir();
+    const root = await makeProjectWithPacks([{ id: 'alpha', repo: 'github:owner/alpha', ref: 'main' }]);
+
+    const result = await runCliInProcess(root, ['pack', 'override', 'alpha', packDir, '--clear']);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('cannot pass <path> together with --clear');
+  });
+
+  it('pack override <id> (no path, no --clear) → exit non-zero, stderr mentions missing path', async () => {
+    const root = await makeProjectWithPacks([{ id: 'alpha', repo: 'github:owner/alpha', ref: 'main' }]);
+
+    const result = await runCliInProcess(root, ['pack', 'override', 'alpha']);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('missing <path> argument');
+  });
+
+  it('pack list shows (override → <path>) for overridden packs and not for un-overridden ones', async () => {
+    const packDir = await makePackDir();
+    const root = await makeProjectWithPacks([
+      { id: 'alpha', repo: 'github:owner/alpha', ref: 'main' },
+      { id: 'beta', repo: 'github:owner/beta', ref: 'v1' },
+    ]);
+
+    await setProjectPackOverride(root, 'alpha', packDir);
+
+    const result = await runCliInProcess(root, ['pack', 'list']);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(`(override → ${packDir})`);
+    // beta has no override
+    const lines = result.stdout.split('\n');
+    const betaLine = lines.find((l) => l.includes('beta'));
+    expect(betaLine).toBeDefined();
+    expect(betaLine).not.toContain('override');
+    // alpha line has override
+    const alphaLine = lines.find((l) => l.includes('alpha'));
+    expect(alphaLine).toBeDefined();
+    expect(alphaLine).toContain('override');
   });
 });

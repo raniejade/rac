@@ -8,7 +8,7 @@ import { parse } from 'smol-toml';
 import { z } from 'zod';
 
 import { parseSelector, pathsOverlap } from './selector.js';
-import type { AgentDef, McpDef, PackRuntime, PackSpec, RuleCommandItem, RuleDecision, RuleDef, SkillDef, Target, VendorConfigDef } from './types.js';
+import type { AgentDef, McpDef, PackOverride, PackRuntime, PackSpec, RuleCommandItem, RuleDecision, RuleDef, SkillDef, Target, VendorConfigDef } from './types.js';
 import { asRecord, collectEnvVarsFromText, jsonPathBracketSelector, normalizeDefinitionId } from './util.js';
 
 const PACK_ID_RE = /^[A-Za-z0-9._-]+$/;
@@ -326,10 +326,96 @@ export async function loadProjectPackConfig(projectRoot: string): Promise<{ pack
   return { packs };
 }
 
+export async function loadPackOverrides(projectRoot: string): Promise<PackOverride[]> {
+  const configPath = path.join(projectRoot, 'config.local.toml');
+  let raw: string;
+  try {
+    raw = await readFile(configPath, 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw err;
+  }
+
+  const parsed = parseTomlOrThrow(configPath, raw);
+
+  for (const key of Object.keys(parsed)) {
+    if (key !== 'pack_overrides') throw new Error(`unknown key "${key}" in ${configPath}; config.local.toml only supports [[pack_overrides]]`);
+  }
+
+  const rawOverrides = parsed.pack_overrides;
+  if (rawOverrides === undefined) return [];
+  if (!Array.isArray(rawOverrides)) throw new Error(`invalid [[pack_overrides]] block in ${configPath}`);
+
+  const seen = new Set<string>();
+  const out: PackOverride[] = [];
+
+  for (let i = 0; i < rawOverrides.length; i++) {
+    const entry = rawOverrides[i];
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      throw new Error(`invalid [[pack_overrides]] entry at index ${i} in ${configPath}`);
+    }
+    const row = entry as Record<string, unknown>;
+
+    const id = row.id;
+    if (id === undefined) throw new Error(`missing pack_overrides.id at index ${i} in ${configPath}`);
+    if (typeof id !== 'string' || !id) throw new Error(`invalid pack_overrides.id at index ${i} in ${configPath}; must be a non-empty string`);
+    if (!PACK_ID_RE.test(id)) throw new Error(`invalid pack id; use ASCII path-safe letters/numbers/./_/-: ${id}`);
+    if (id === 'project') throw new Error(`invalid pack id; project is reserved for the local project pack`);
+    if (seen.has(id)) throw new Error(`duplicate pack_overrides id: ${id}`);
+    seen.add(id);
+
+    const pathVal = row.path;
+    if (pathVal === undefined) throw new Error(`missing pack_overrides.path for ${id} in ${configPath}`);
+    if (typeof pathVal !== 'string' || !pathVal) throw new Error(`invalid pack_overrides.path for ${id} in ${configPath}; must be a non-empty string`);
+
+    out.push({ id, path: pathVal });
+  }
+
+  return out;
+}
+
 export async function loadSharedPackConfig(root: string): Promise<void> {
   const configPath = path.join(root, 'config.toml');
   const parsed = parseTomlOrThrow(configPath, await readFile(configPath, 'utf8'));
   if (parsed.packs !== undefined) throw new Error(`shared pack config cannot contain [[packs]]: ${configPath}`);
+}
+
+export function resolvePackOverridePath(overridePath: string, projectRoot: string): string {
+  const projectCwd = path.dirname(projectRoot);
+  return path.isAbsolute(overridePath) ? overridePath : path.resolve(projectCwd, overridePath);
+}
+
+export async function ensureLocalPack(
+  spec: PackSpec,
+  overridePath: string,
+  projectRoot: string,
+): Promise<PackRuntime> {
+  const resolved = resolvePackOverridePath(overridePath, projectRoot);
+
+  let dirStat: Awaited<ReturnType<typeof stat>>;
+  try {
+    dirStat = await stat(resolved);
+  } catch {
+    throw new Error(`pack override path does not exist: ${spec.id} → ${resolved}`);
+  }
+  if (!dirStat.isDirectory()) throw new Error(`pack override path is not a directory: ${spec.id} → ${resolved}`);
+
+  const innerConfig = path.join(resolved, '.rac', 'config.toml');
+  try {
+    await stat(innerConfig);
+  } catch {
+    throw new Error(`pack override path missing .rac/config.toml: ${spec.id} → ${resolved} (expected ${innerConfig})`);
+  }
+
+  await loadSharedPackConfig(path.join(resolved, '.rac'));
+
+  return {
+    id: spec.id,
+    root: path.join(resolved, '.rac'),
+    sourceRepo: spec.repo,
+    sourceRef: spec.ref,
+    override: { path: resolved },
+  };
 }
 
 export async function resolvePacks(
@@ -341,8 +427,25 @@ export async function resolvePacks(
   try { await stat(configPath); } catch { throw new Error(`missing required config: ${configPath}`); }
 
   const project = await loadProjectPackConfig(projectRoot);
+  const overrides = await loadPackOverrides(projectRoot);
+
+  const overrideMap = new Map<string, PackOverride>();
+  for (const ov of overrides) overrideMap.set(ov.id, ov);
+
+  for (const ov of overrides) {
+    const found = project.packs.some((p) => p.id === ov.id);
+    if (!found) throw new Error(`pack override target not found: ${ov.id} (no matching [[packs]] entry in ${configPath})`);
+  }
+
   const out: PackRuntime[] = [{ id: 'project', root: projectRoot }];
-  for (const spec of project.packs) out.push(await ensureSharedPack(spec, opts));
+  for (const spec of project.packs) {
+    const ov = overrideMap.get(spec.id);
+    if (ov) {
+      out.push(await ensureLocalPack(spec, ov.path, projectRoot));
+    } else {
+      out.push(await ensureSharedPack(spec, opts));
+    }
+  }
   return out;
 }
 

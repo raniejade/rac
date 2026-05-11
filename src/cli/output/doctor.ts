@@ -12,6 +12,24 @@ export interface ConfigWarningView {
 }
 
 /**
+ * Render a list of warnings as inline lines without group headers or summary.
+ * Used to embed warnings into other command output (e.g., install).
+ * Returns an empty string when the list is empty.
+ */
+export function renderWarnings(warnings: ConfigWarningView[], mode: ColorMode): string {
+  if (warnings.length === 0) return '';
+  const s = styles(mode);
+  const lines: string[] = [];
+  for (const w of warnings) {
+    lines.push(`  ${badge(w.severity, mode)}  ${s.gray(w.code)}  ${w.message}`);
+    if (w.hint) {
+      lines.push(`      hint: ${w.hint}`);
+    }
+  }
+  return lines.join('\n') + '\n';
+}
+
+/**
  * Render doctor warnings as a formatted string.
  * Groups by severity (error → warn → info), then shows a summary.
  */

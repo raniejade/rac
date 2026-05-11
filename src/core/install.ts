@@ -8,8 +8,8 @@ import { adapterFor, vendorManifestRelPath } from '../adapters/target-adapters.j
 import { buildRuntimeConfig } from './config-model.js';
 import type { ConfigWarning } from './config-model.js';
 import { deleteManifest, loadManifest, saveManifest } from './manifest.js';
-import { loadAgents, loadInstallSettings, loadMcps, loadRules, loadSkills, loadVendorConfigs, resolvePacks } from './parsers.js';
-import type { InstallChange, InstallManifest, InstallOptions, InstallResult, Kind, ManifestRecord, Scope, Target } from './types.js';
+import { loadAgents, loadInstallSettings, loadMcps, loadPackOverrides, loadRules, loadSkills, loadVendorConfigs, resolvePackOverridePath, resolvePacks } from './parsers.js';
+import type { InstallChange, InstallManifest, InstallOptions, InstallResult, Kind, ManifestRecord, PackOverride, Scope, Target } from './types.js';
 import { MANAGED_JSONC_WARNING, MANAGED_MARKDOWN_WARNING, MANAGED_TOML_WARNING, resolveContainedPath, sha256 } from './util.js';
 
 export type PlannedWrite = ManifestRecord & {
@@ -132,6 +132,24 @@ export async function initProject(cwd: string, empty = false, scope: Scope = 'pr
   }
   const configPath = path.join(root, 'config.toml');
   if (!(await exists(configPath))) await writeFile(configPath, '', 'utf8');
+
+  // Ensure .rac/.gitignore contains config.local.toml so local pack overrides
+  // are never accidentally committed.
+  const gitignorePath = path.join(root, '.gitignore');
+  const GITIGNORE_ENTRY = 'config.local.toml';
+  const existingGitignore = await exists(gitignorePath) ? await readFile(gitignorePath, 'utf8') : null;
+  if (existingGitignore === null) {
+    await writeFile(gitignorePath, `${GITIGNORE_ENTRY}\n`, 'utf8');
+  } else {
+    const lines = existingGitignore.split('\n');
+    if (!lines.includes(GITIGNORE_ENTRY)) {
+      const appended = existingGitignore.endsWith('\n')
+        ? `${existingGitignore}${GITIGNORE_ENTRY}\n`
+        : `${existingGitignore}\n${GITIGNORE_ENTRY}\n`;
+      await writeFile(gitignorePath, appended, 'utf8');
+    }
+  }
+
   if (empty) return;
 
   const reviewerToml = path.join(root, 'agents', 'reviewer.toml');
@@ -654,6 +672,19 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
   };
 }
 
+export function buildOverrideWarnings(overrides: PackOverride[], projectRoot: string): ConfigWarning[] {
+  return overrides.map((ov) => {
+    const resolved = resolvePackOverridePath(ov.path, projectRoot);
+    return {
+      severity: 'warn' as const,
+      code: 'pack_override_active',
+      message: `pack override active: ${ov.id} → ${resolved}`,
+      hint: `remove via \`rac pack override --clear ${ov.id}\` before publishing`,
+      context: { pack: ov.id },
+    };
+  });
+}
+
 export async function doctor(cwd: string, targets: Target[] | undefined, kinds: Kind[], scope: Scope = 'project'): Promise<ConfigWarning[]> {
   const sourceCwd = scope === 'user' ? (process.env.RAC_HOME?.trim() || os.homedir()) : cwd;
   const root = path.join(sourceCwd, '.rac');
@@ -679,6 +710,12 @@ export async function doctor(cwd: string, targets: Target[] | undefined, kinds: 
   const config = await buildRuntimeConfig({ root, agents: parsedAgents, skills: parsedSkills, mcps: parsedMcps, rules: parsedRules, configs: parsedConfigs });
 
   const warnings: ConfigWarning[] = [];
+
+  // Emit WARN per active pack override (project scope only; user scope doesn't support packs)
+  if (scope === 'project') {
+    const overrides = await loadPackOverrides(root);
+    warnings.push(...buildOverrideWarnings(overrides, root));
+  }
 
   if (kinds.includes('mcp')) {
     for (const mcp of config.mcps) {
