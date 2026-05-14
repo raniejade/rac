@@ -232,6 +232,12 @@ ref = "main"
 - RAC resolves shared packs with system `git` into cache (`$RAC_CACHE_DIR` or `~/.cache/rac`), then checks out `--detach <ref>`.
 - Shared packs can provide definitions but cannot define transitive `[[packs]]`.
 
+### Why these `id` rules?
+
+`project` is reserved because `resolvePacks()` synthesizes a `PackRuntime` with `id: 'project'` for the local `.rac/` directory before it merges any shared packs. If a shared pack were allowed to declare `id = "project"`, two runtime entries would share the same id. That collision breaks every surface keyed by id: the `pack:` ownership label written on every install record by every target adapter (making removal-cleanup ambiguous), the entries in `rac-lock.json`, and the CLI commands that accept an id argument (`rac pack remove <id>`, `rac pack override <id>`). The reservation is a structural necessity, not an arbitrary naming preference.
+
+The ASCII path-safe character set (`A-Z a-z 0-9 . _ -`) follows from where the id appears: manifest JSON, lockfile JSON, CLI arguments, error messages, and adapter output metadata. Keeping it within this set ensures those surfaces need no escaping today and preserves the option to use the id as a filesystem path component later without a backwards-incompatible widening of the allowed characters. For accuracy: today the pack cache directory is keyed off `base64url(repo@ref)`, not the id, so the character restriction is forward-defensive rather than currently load-bearing on filesystem paths.
+
 ## Lockfile (`rac-lock.json`)
 
 ### What it is
