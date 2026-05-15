@@ -829,6 +829,7 @@ describe('install + doctor', () => {
 
     const testingPatterns = '# Patterns\n- red\n- green\n';
     const securityChecklist = '# Security\n- sanitize\n- audit\n';
+    const expectedSkillContent = `---\ndescription: "shared impl skill"\nname: "impl"\n---\n${MANAGED_MARKDOWN_WARNING}\nUse shared patterns.\n`;
     const expectedSourceTesting = 'skills/impl/references/testing-patterns.md';
     const expectedSourceSecurity = 'skills/impl/references/security-checklist.md';
 
@@ -837,7 +838,7 @@ describe('install + doctor', () => {
       ['.agents/skills/impl', '.agents/.rac-install-manifest.json', 'codex'],
       ['.opencode/skills/impl', '.opencode/.rac-install-manifest.json', 'opencode']
     ] as const) {
-      expect(await readFile(path.join(root, targetRoot, 'SKILL.md'), 'utf8')).toContain('Use shared patterns.');
+      expect(await readFile(path.join(root, targetRoot, 'SKILL.md'), 'utf8')).toBe(expectedSkillContent);
       expect(await readFile(path.join(root, targetRoot, 'references/testing-patterns.md'), 'utf8')).toBe(testingPatterns);
       expect(await readFile(path.join(root, targetRoot, 'references/security-checklist.md'), 'utf8')).toBe(securityChecklist);
 
