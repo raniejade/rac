@@ -4,6 +4,26 @@ import path from 'node:path';
 
 import { assert, spawnCapture } from './lib.mjs';
 
+function parseManagedMarkdown(raw) {
+  const normalized = raw.replace(/\r\n/g, '\n');
+  const match = normalized.match(/^---\n([\s\S]*?)\n---\n(<!-- DO NOT EDIT; managed by rac -->)\n([\s\S]*)$/);
+  assert(match, 'Claude reviewer agent markdown does not match managed frontmatter format');
+
+  const frontmatter = {};
+  for (const line of match[1].split('\n')) {
+    if (!line.trim()) continue;
+    const kv = line.match(/^([A-Za-z0-9_-]+):\s+"([\s\S]*)"$/);
+    assert(kv, `Claude reviewer agent frontmatter has invalid line: ${line}`);
+    frontmatter[kv[1]] = kv[2];
+  }
+
+  return {
+    frontmatter,
+    managedMarker: match[2],
+    body: match[3]
+  };
+}
+
 export async function checkClaudeProject(sampleRepo) {
   const claudeMcpList = await spawnCapture('claude', ['mcp', 'list'], sampleRepo);
   assert(claudeMcpList.code === 0, `Claude MCP discovery (project-scope) failed with code ${claudeMcpList.code}\nstdout:\n${claudeMcpList.stdout}\nstderr:\n${claudeMcpList.stderr}`);
@@ -13,10 +33,23 @@ export async function checkClaudeProject(sampleRepo) {
   assert(mcpJson.mcpServers['project-rules'].env.LOG_LEVEL === 'info', 'Claude project .mcp.json missing project-rules env.LOG_LEVEL');
   assert(mcpJson.mcpServers['project-rules'].env.PROJECT_RULES_TOKEN === '${PROJECT_RULES_TOKEN}', 'Claude project .mcp.json missing project-rules env.PROJECT_RULES_TOKEN');
 
-  const claudeAgents = await spawnCapture('claude', ['agents', '--setting-sources', 'project'], sampleRepo);
-  assert(claudeAgents.code === 0, `Claude agents discovery failed with code ${claudeAgents.code}\nstdout:\n${claudeAgents.stdout}\nstderr:\n${claudeAgents.stderr}`);
-  assert(/reviewer/.test(`${claudeAgents.stdout}\n${claudeAgents.stderr}`), 'Claude agents output missing reviewer project agent');
-  // Claude CLI has no stable project skills list/load command in this harness.
+  // We used to call `claude agents --setting-sources project` here, but Claude Code changed
+  // `claude agents` into Agent View/background-session management. RAC owns the generated
+  // `.claude/agents/*.md` file contract, so this harness verifies that stable output directly.
+  const reviewerRaw = await readFile(path.join(sampleRepo, '.claude', 'agents', 'reviewer.md'), 'utf8');
+  const reviewerActual = parseManagedMarkdown(reviewerRaw);
+  const reviewerExpected = {
+    frontmatter: {
+      name: 'reviewer',
+      description: 'Checks project rules and required gates'
+    },
+    managedMarker: '<!-- DO NOT EDIT; managed by rac -->',
+    body: '# Reviewer Agent\n\nReview planned changes against project rules and required gates.\nBlock merges when required checks fail.\n'
+  };
+  assert(
+    JSON.stringify(reviewerActual) === JSON.stringify(reviewerExpected),
+    `Claude reviewer agent content mismatch.\nexpected:\n${JSON.stringify(reviewerExpected, null, 2)}\nactual:\n${JSON.stringify(reviewerActual, null, 2)}`
+  );
 }
 
 export async function checkClaudeUser({ userHome, cwd }) {

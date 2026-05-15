@@ -7,13 +7,62 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { doctor, initProject, install } from '../src/core/install.js';
 import { loadProjectPackConfig, loadSharedPackConfig } from '../src/core/parsers.js';
-import { MANAGED_JSONC_WARNING, MANAGED_MARKDOWN_WARNING, MANAGED_TOML_WARNING } from '../src/core/util.js';
+import { MANAGED_JSONC_WARNING, MANAGED_MARKDOWN_WARNING, MANAGED_TOML_WARNING, sha256 } from '../src/core/util.js';
 
 import { cleanupTmpDirs, makeTmp, readJsoncFile, runCliInProcess, seed } from './helpers.js';
 
 afterEach(cleanupTmpDirs);
 
 describe('install + doctor', () => {
+  async function setupSharedSkillPackOverride(root: string, packDir: string): Promise<void> {
+    await mkdir(path.join(packDir, '.rac/skills/impl/references'), { recursive: true });
+    await writeFile(path.join(packDir, '.rac/config.toml'), '', 'utf8');
+    await writeFile(
+      path.join(packDir, '.rac/skills/impl/SKILL.tpl.md'),
+      '+++\ndescription = "shared impl skill"\n+++\nUse shared patterns.\n',
+      'utf8'
+    );
+    await writeFile(path.join(packDir, '.rac/skills/impl/references/testing-patterns.md'), '# Patterns\n- red\n- green\n', 'utf8');
+    await writeFile(path.join(packDir, '.rac/skills/impl/references/security-checklist.md'), '# Security\n- sanitize\n- audit\n', 'utf8');
+
+    await mkdir(path.join(root, '.rac'), { recursive: true });
+    await writeFile(
+      path.join(root, '.rac/config.toml'),
+      '[[packs]]\nid = "shared-pack"\nrepo = "github:owner/shared-pack"\nref = "main"\n',
+      'utf8'
+    );
+    await writeFile(
+      path.join(root, '.rac/config.local.toml'),
+      `[[pack_overrides]]\nid = "shared-pack"\npath = ${JSON.stringify(packDir)}\n`,
+      'utf8'
+    );
+  }
+
+  function getReferenceRecords(
+    records: Array<{
+      pack: string;
+      target: string;
+      kind: string;
+      id: string;
+      source: string;
+      relPath: string;
+      hash: string;
+      inventory: Array<{ version: number; format: string; selector: string }>;
+    }>,
+    relPathPrefix: string
+  ): Array<{
+    pack: string;
+    target: string;
+    kind: string;
+    id: string;
+    source: string;
+    relPath: string;
+    hash: string;
+    inventory: Array<{ version: number; format: string; selector: string }>;
+  }> {
+    return records.filter((record) => record.relPath.startsWith(relPathPrefix) && record.relPath.includes('/references/'));
+  }
+
   it('init refuses overwrite and install auto-discovers all non-SKILL files', async () => {
     const root = await makeTmp();
     await initProject(root, false);
@@ -769,6 +818,124 @@ describe('install + doctor', () => {
     await expect(install({ cwd: root, targets: ['codex'], kinds: ['skill'] })).resolves.toBeTruthy();
     const manifestTwo = JSON.parse(await readFile(manifestPath, 'utf8')) as { records: unknown[] };
     expect(manifestTwo.records).toEqual(manifestOne.records);
+  });
+
+  it('installs shared-pack nested skill references for claude/codex/opencode and writes file-format manifest records', async () => {
+    const root = await makeTmp();
+    const packDir = await makeTmp();
+    await setupSharedSkillPackOverride(root, packDir);
+
+    await install({ cwd: root, targets: ['claude', 'codex', 'opencode'], kinds: ['skill'] });
+
+    const testingPatterns = '# Patterns\n- red\n- green\n';
+    const securityChecklist = '# Security\n- sanitize\n- audit\n';
+    const expectedSkillContent = `---\ndescription: "shared impl skill"\nname: "impl"\n---\n${MANAGED_MARKDOWN_WARNING}\nUse shared patterns.\n`;
+    const expectedSourceTesting = 'skills/impl/references/testing-patterns.md';
+    const expectedSourceSecurity = 'skills/impl/references/security-checklist.md';
+
+    for (const [targetRoot, manifestPath, target] of [
+      ['.claude/skills/impl', '.claude/.rac-install-manifest.json', 'claude'],
+      ['.agents/skills/impl', '.agents/.rac-install-manifest.json', 'codex'],
+      ['.opencode/skills/impl', '.opencode/.rac-install-manifest.json', 'opencode']
+    ] as const) {
+      expect(await readFile(path.join(root, targetRoot, 'SKILL.md'), 'utf8')).toBe(expectedSkillContent);
+      expect(await readFile(path.join(root, targetRoot, 'references/testing-patterns.md'), 'utf8')).toBe(testingPatterns);
+      expect(await readFile(path.join(root, targetRoot, 'references/security-checklist.md'), 'utf8')).toBe(securityChecklist);
+
+      const manifest = JSON.parse(await readFile(path.join(root, manifestPath), 'utf8')) as {
+        records: Array<{
+          pack: string;
+          target: string;
+          kind: string;
+          id: string;
+          source: string;
+          relPath: string;
+          hash: string;
+          inventory: Array<{ version: number; format: string; selector: string }>;
+        }>;
+      };
+      const referenceRecords = getReferenceRecords(manifest.records, targetRoot.replace(/^\./, '.'));
+      expect(referenceRecords).toHaveLength(2);
+
+      const testingRecord = referenceRecords.find((record) => record.source === expectedSourceTesting);
+      expect(testingRecord).toMatchObject({
+        pack: 'shared-pack',
+        target,
+        kind: 'skill',
+        id: 'impl',
+        source: expectedSourceTesting,
+        relPath: `${targetRoot}/references/testing-patterns.md`,
+        hash: sha256(testingPatterns)
+      });
+      expect(testingRecord?.inventory).toEqual([{ version: 1, format: 'file', selector: '$' }]);
+
+      const securityRecord = referenceRecords.find((record) => record.source === expectedSourceSecurity);
+      expect(securityRecord).toMatchObject({
+        pack: 'shared-pack',
+        target,
+        kind: 'skill',
+        id: 'impl',
+        source: expectedSourceSecurity,
+        relPath: `${targetRoot}/references/security-checklist.md`,
+        hash: sha256(securityChecklist)
+      });
+      expect(securityRecord?.inventory).toEqual([{ version: 1, format: 'file', selector: '$' }]);
+    }
+  });
+
+  it('backfills newly added shared-pack nested skill references on reinstall', async () => {
+    const root = await makeTmp();
+    const packDir = await makeTmp();
+    await mkdir(path.join(packDir, '.rac/skills/impl'), { recursive: true });
+    await writeFile(path.join(packDir, '.rac/config.toml'), '', 'utf8');
+    await writeFile(
+      path.join(packDir, '.rac/skills/impl/SKILL.tpl.md'),
+      '+++\ndescription = "shared impl skill"\n+++\nUse shared patterns.\n',
+      'utf8'
+    );
+    await mkdir(path.join(root, '.rac'), { recursive: true });
+    await writeFile(
+      path.join(root, '.rac/config.toml'),
+      '[[packs]]\nid = "shared-pack"\nrepo = "github:owner/shared-pack"\nref = "main"\n',
+      'utf8'
+    );
+    await writeFile(
+      path.join(root, '.rac/config.local.toml'),
+      `[[pack_overrides]]\nid = "shared-pack"\npath = ${JSON.stringify(packDir)}\n`,
+      'utf8'
+    );
+
+    await install({ cwd: root, targets: ['claude', 'codex', 'opencode'], kinds: ['skill'] });
+
+    await mkdir(path.join(packDir, '.rac/skills/impl/references'), { recursive: true });
+    await writeFile(path.join(packDir, '.rac/skills/impl/references/testing-patterns.md'), '# Patterns\n- red\n- green\n', 'utf8');
+    await writeFile(path.join(packDir, '.rac/skills/impl/references/security-checklist.md'), '# Security\n- sanitize\n- audit\n', 'utf8');
+
+    await install({ cwd: root, targets: ['claude', 'codex', 'opencode'], kinds: ['skill'] });
+
+    for (const [targetRoot, manifestPath] of [
+      ['.claude/skills/impl', '.claude/.rac-install-manifest.json'],
+      ['.agents/skills/impl', '.agents/.rac-install-manifest.json'],
+      ['.opencode/skills/impl', '.opencode/.rac-install-manifest.json']
+    ] as const) {
+      await expect(stat(path.join(root, targetRoot, 'references/testing-patterns.md'))).resolves.toBeTruthy();
+      await expect(stat(path.join(root, targetRoot, 'references/security-checklist.md'))).resolves.toBeTruthy();
+      const manifest = JSON.parse(await readFile(path.join(root, manifestPath), 'utf8')) as {
+        records: Array<{ relPath: string; source: string; pack: string; inventory: Array<{ format: string }> }>;
+      };
+      expect(manifest.records.some((record) =>
+        record.pack === 'shared-pack' &&
+        record.relPath === `${targetRoot}/references/testing-patterns.md` &&
+        record.source === 'skills/impl/references/testing-patterns.md' &&
+        record.inventory[0]?.format === 'file'
+      )).toBe(true);
+      expect(manifest.records.some((record) =>
+        record.pack === 'shared-pack' &&
+        record.relPath === `${targetRoot}/references/security-checklist.md` &&
+        record.source === 'skills/impl/references/security-checklist.md' &&
+        record.inventory[0]?.format === 'file'
+      )).toBe(true);
+    }
   });
 
   it('clean removes empty vendor manifest after last record is removed', async () => {

@@ -5,7 +5,7 @@ import path from 'node:path';
 
 import { parse as parseJsonc } from 'jsonc-parser';
 
-import { createProgram } from '../src/cli.js';
+import { createProgram } from '../src/cli-program.js';
 
 const tempDirs: string[] = [];
 
