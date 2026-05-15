@@ -1,6 +1,8 @@
 #!/usr/bin/env node
-import { basename } from 'node:path';
+import { realpathSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
+import { fileURLToPath } from 'node:url';
 
 import { Command, InvalidArgumentError } from 'commander';
 
@@ -356,10 +358,13 @@ async function main() {
   }
 }
 
-export function shouldRunCliEntrypoint(argv1: string | undefined): boolean {
+export function shouldRunCliEntrypoint(argv1: string | undefined, modulePath: string = fileURLToPath(import.meta.url)): boolean {
   if (!argv1) return false;
-  const entryName = basename(argv1);
-  return entryName === 'rac' || entryName === 'cli.js' || entryName === 'cli.ts';
+  try {
+    return realpathSync(resolve(argv1)) === realpathSync(modulePath);
+  } catch {
+    return false;
+  }
 }
 
 // Only invoke main() when run as a script (not when imported as a module)
