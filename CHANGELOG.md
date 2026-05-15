@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.1
+
+### Patch Changes
+
+- [#43](https://github.com/raniejade/rac/pull/43) [`c332b44`](https://github.com/raniejade/rac/commit/c332b442bd9a1b93558eab3ef71ec7131fa12365) Thanks [@raniejade](https://github.com/raniejade)! - Fix the RAC CLI package entrypoint by splitting the import-safe command program from the executable bin entrypoint, so installed `rac` binaries run correctly while tests can import the program safely.
+
+  Add regression coverage for shared-pack skill reference files, including reinstall backfill when an older manifest only tracked `SKILL.md`.
+
 ## 0.4.0
 
 ### Minor Changes
