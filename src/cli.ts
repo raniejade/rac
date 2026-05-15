@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { basename } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 
 import { Command, InvalidArgumentError } from 'commander';
@@ -355,7 +356,13 @@ async function main() {
   }
 }
 
+export function shouldRunCliEntrypoint(argv1: string | undefined): boolean {
+  if (!argv1) return false;
+  const entryName = basename(argv1);
+  return entryName === 'rac' || entryName === 'cli.js' || entryName === 'cli.ts';
+}
+
 // Only invoke main() when run as a script (not when imported as a module)
-if (process.argv[1]?.endsWith('cli.js') || process.argv[1]?.endsWith('cli.ts')) {
+if (shouldRunCliEntrypoint(process.argv[1])) {
   await main();
 }
